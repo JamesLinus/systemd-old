@@ -268,7 +268,8 @@ rootbin_PROGRAMS = \
 	systemd-ask-password \
 	systemd-tty-ask-password-agent \
 	systemd-tmpfiles \
-	systemd-machine-id-setup
+	systemd-machine-id-setup \
+	systemd-analyze
 
 bin_PROGRAMS = \
 	systemd-cgls \
@@ -299,14 +300,16 @@ systemgenerator_PROGRAMS = \
 	systemd-system-update-generator \
 	systemd-efi-boot-generator
 
-dist_bin_SCRIPTS = \
-	src/analyze/systemd-analyze
+systemd_analyze_SOURCES = \
+	src/analyze/systemd-analyze.c
 
-EXTRA_DIST += \
-	src/analyze/systemd-analyze.in
+systemd_analyze_CFLAGS = \
+	$(AM_CFLAGS) \
+	$(DBUS_CFLAGS)
 
-CLEANFILES += \
-	src/analyze/systemd-analyze
+systemd_analyze_LDADD = \
+	libsystemd-shared.la \
+	libsystemd-dbus.la
 
 dist_bashcompletion_DATA = \
 	shell-completion/systemd-bash-completion.sh
@@ -3852,10 +3855,6 @@ src/%.policy.in: src/%.policy.in.in Makefile
 	$(SED_PROCESS)
 
 %.sh: %.sh.in Makefile
-	$(SED_PROCESS)
-	$(AM_V_GEN)chmod +x $@
-
-src/analyze/systemd-analyze: %: %.in Makefile
 	$(SED_PROCESS)
 	$(AM_V_GEN)chmod +x $@
 
