@@ -28,7 +28,7 @@
 
 #include "install.h"
 #include "log.h"
-#include "dbus-common.h"
+#include "sd-bus-common.h"
 #include "build.h"
 #include "util.h"
 #include "strxcpyx.h"
@@ -79,43 +79,6 @@ struct unit_times {
         usec_t time;
 };
 
-static int bus_get_uint64_property(DBusConnection *bus, const char *path, const char *interface, const char *property, uint64_t *val) {
-        _cleanup_dbus_message_unref_ DBusMessage *reply = NULL;
-        DBusMessageIter iter, sub;
-        int r;
-
-        r = bus_method_call_with_reply(
-                        bus,
-                        "org.freedesktop.systemd1",
-                        path,
-                        "org.freedesktop.DBus.Properties",
-                        "Get",
-                        &reply,
-                        NULL,
-                        DBUS_TYPE_STRING, &interface,
-                        DBUS_TYPE_STRING, &property,
-                        DBUS_TYPE_INVALID);
-        if (r < 0)
-                return r;
-
-        if (!dbus_message_iter_init(reply, &iter) ||
-            dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_VARIANT)  {
-                log_error("Failed to parse reply.");
-                return -EIO;
-        }
-
-        dbus_message_iter_recurse(&iter, &sub);
-
-        if (dbus_message_iter_get_arg_type(&sub) != DBUS_TYPE_UINT64)  {
-                log_error("Failed to parse reply.");
-                return -EIO;
-        }
-
-        dbus_message_iter_get_basic(&sub, val);
-
-        return 0;
-}
-
 static int compare_unit_time(const void *a, const void *b) {
         return compare(((struct unit_times *)b)->time,
                        ((struct unit_times *)a)->time);
@@ -150,43 +113,32 @@ static void free_unit_times(struct unit_times *t, unsigned n) {
         free(t);
 }
 
-static int acquire_time_data(DBusConnection *bus, struct unit_times **out) {
-        _cleanup_dbus_message_unref_ DBusMessage *reply = NULL;
-        DBusMessageIter iter, sub;
+static int acquire_time_data(sd_bus *bus, struct unit_times **out) {
+        _cleanup_sd_bus_message_unref_ sd_bus_message *reply = NULL;
         int r, c = 0, n_units = 0;
         struct unit_times *unit_times = NULL;
 
-        r = bus_method_call_with_reply(
+        r = sd_bus_call_method(
                         bus,
                         "org.freedesktop.systemd1",
                         "/org/freedesktop/systemd1",
                         "org.freedesktop.systemd1.Manager",
                         "ListUnits",
-                        &reply,
                         NULL,
-                        DBUS_TYPE_INVALID);
+                        &reply,
+                        NULL);
         if (r < 0)
                 goto fail;
 
-        if (!dbus_message_iter_init(reply, &iter) ||
-                        dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_ARRAY ||
-                        dbus_message_iter_get_element_type(&iter) != DBUS_TYPE_STRUCT)  {
+        r = sd_bus_message_enter_container(reply, SD_BUS_TYPE_ARRAY, "(ssssssouso)");
+        if (r < 0) {
                 log_error("Failed to parse reply.");
-                r = -EIO;
                 goto fail;
         }
 
-        for (dbus_message_iter_recurse(&iter, &sub);
-             dbus_message_iter_get_arg_type(&sub) != DBUS_TYPE_INVALID;
-             dbus_message_iter_next(&sub)) {
+        while (sd_bus_message_exit_container(reply) == -EBUSY) {
                 struct unit_info u;
                 struct unit_times *t;
-
-                if (dbus_message_iter_get_arg_type(&sub) != DBUS_TYPE_STRUCT) {
-                        log_error("Failed to parse reply.");
-                        r = -EIO;
-                        goto fail;
-                }
 
                 if (c >= n_units) {
                         struct unit_times *w;
@@ -204,31 +156,51 @@ static int acquire_time_data(DBusConnection *bus, struct unit_times **out) {
                 t = unit_times+c;
                 t->name = NULL;
 
-                r = bus_parse_unit_info(&sub, &u);
+                r = bus_parse_unit_info(reply, &u);
                 if (r < 0)
                         goto fail;
 
                 assert_cc(sizeof(usec_t) == sizeof(uint64_t));
 
-                if (bus_get_uint64_property(bus, u.unit_path,
-                                            "org.freedesktop.systemd1.Unit",
-                                            "InactiveExitTimestampMonotonic",
-                                            &t->ixt) < 0 ||
-                    bus_get_uint64_property(bus, u.unit_path,
-                                            "org.freedesktop.systemd1.Unit",
-                                            "ActiveEnterTimestampMonotonic",
-                                            &t->aet) < 0 ||
-                    bus_get_uint64_property(bus, u.unit_path,
-                                            "org.freedesktop.systemd1.Unit",
-                                            "ActiveExitTimestampMonotonic",
-                                            &t->axt) < 0 ||
-                    bus_get_uint64_property(bus, u.unit_path,
-                                            "org.freedesktop.systemd1.Unit",
-                                            "InactiveEnterTimestampMonotonic",
-                                            &t->iet) < 0) {
-                        r = -EIO;
+                r = bus_get_property(bus,
+                                     "org.freedesktop.systemd1",
+                                     u.unit_path,
+                                     "org.freedesktop.systemd1.Unit",
+                                     "InactiveExitTimestampMonotonic",
+                                     SD_BUS_TYPE_UINT64,
+                                     &t->ixt);
+                if (r < 0)
                         goto fail;
-                }
+
+                r = bus_get_property(bus,
+                                     "org.freedesktop.systemd1",
+                                     u.unit_path,
+                                     "org.freedesktop.systemd1.Unit",
+                                     "ActiveEnterTimestampMonotonic",
+                                     SD_BUS_TYPE_UINT64,
+                                     &t->aet);
+                if (r < 0)
+                        goto fail;
+
+                r = bus_get_property(bus,
+                                     "org.freedesktop.systemd1",
+                                     u.unit_path,
+                                     "org.freedesktop.systemd1.Unit",
+                                     "ActiveExitTimestampMonotonic",
+                                     SD_BUS_TYPE_UINT64,
+                                     &t->axt);
+                if (r < 0)
+                        goto fail;
+
+                r = bus_get_property(bus,
+                                     "org.freedesktop.systemd1",
+                                     u.unit_path,
+                                     "org.freedesktop.systemd1.Unit",
+                                     "InactiveEnterTimestampMonotonic",
+                                     SD_BUS_TYPE_UINT64,
+                                     &t->iet);
+                if (r < 0)
+                        goto fail;
 
                 if (t->aet >= t->ixt)
                         t->time = t->aet - t->ixt;
@@ -256,7 +228,7 @@ fail:
         return r;
 }
 
-static int acquire_boot_times(DBusConnection *bus, struct boot_times **bt) {
+static int acquire_boot_times(sd_bus *bus, struct boot_times **bt) {
         static struct boot_times times;
         static bool cached = false;
 
@@ -265,36 +237,48 @@ static int acquire_boot_times(DBusConnection *bus, struct boot_times **bt) {
 
         assert_cc(sizeof(usec_t) == sizeof(uint64_t));
 
-        if (bus_get_uint64_property(bus,
-                                    "/org/freedesktop/systemd1",
-                                    "org.freedesktop.systemd1.Manager",
-                                    "FirmwareTimestampMonotonic",
-                                    &times.firmware_time) < 0 ||
-            bus_get_uint64_property(bus,
-                                    "/org/freedesktop/systemd1",
-                                    "org.freedesktop.systemd1.Manager",
-                                    "LoaderTimestampMonotonic",
-                                    &times.loader_time) < 0 ||
-            bus_get_uint64_property(bus,
-                                    "/org/freedesktop/systemd1",
-                                    "org.freedesktop.systemd1.Manager",
-                                    "KernelTimestamp",
-                                    &times.kernel_time) < 0 ||
-            bus_get_uint64_property(bus,
-                                    "/org/freedesktop/systemd1",
-                                    "org.freedesktop.systemd1.Manager",
-                                    "InitRDTimestampMonotonic",
-                                    &times.initrd_time) < 0 ||
-            bus_get_uint64_property(bus,
-                                    "/org/freedesktop/systemd1",
-                                    "org.freedesktop.systemd1.Manager",
-                                    "UserspaceTimestampMonotonic",
-                                    &times.userspace_time) < 0 ||
-            bus_get_uint64_property(bus,
-                                    "/org/freedesktop/systemd1",
-                                    "org.freedesktop.systemd1.Manager",
-                                    "FinishTimestampMonotonic",
-                                    &times.finish_time) < 0)
+        if (bus_get_property(bus,
+                             "org.freedesktop.systemd1",
+                             "/org/freedesktop/systemd1",
+                             "org.freedesktop.systemd1.Manager",
+                             "FirmwareTimestampMonotonic",
+                             SD_BUS_TYPE_UINT64,
+                             &times.firmware_time) < 0 ||
+            bus_get_property(bus,
+                             "org.freedesktop.systemd1",
+                             "/org/freedesktop/systemd1",
+                             "org.freedesktop.systemd1.Manager",
+                             "LoaderTimestampMonotonic",
+                             SD_BUS_TYPE_UINT64,
+                             &times.loader_time) < 0 ||
+            bus_get_property(bus,
+                             "org.freedesktop.systemd1",
+                             "/org/freedesktop/systemd1",
+                             "org.freedesktop.systemd1.Manager",
+                             "KernelTimestamp",
+                             SD_BUS_TYPE_UINT64,
+                             &times.kernel_time) < 0 ||
+            bus_get_property(bus,
+                             "org.freedesktop.systemd1",
+                             "/org/freedesktop/systemd1",
+                             "org.freedesktop.systemd1.Manager",
+                             "InitRDTimestampMonotonic",
+                             SD_BUS_TYPE_UINT64,
+                             &times.initrd_time) < 0 ||
+            bus_get_property(bus,
+                             "org.freedesktop.systemd1",
+                             "/org/freedesktop/systemd1",
+                             "org.freedesktop.systemd1.Manager",
+                             "UserspaceTimestampMonotonic",
+                             SD_BUS_TYPE_UINT64,
+                             &times.userspace_time) < 0 ||
+            bus_get_property(bus,
+                             "org.freedesktop.systemd1",
+                             "/org/freedesktop/systemd1",
+                             "org.freedesktop.systemd1.Manager",
+                             "FinishTimestampMonotonic",
+                             SD_BUS_TYPE_UINT64,
+                             &times.finish_time) < 0)
                 return -EIO;
 
         if (times.finish_time <= 0) {
@@ -314,7 +298,7 @@ finish:
         return 0;
 }
 
-static int pretty_boot_time(DBusConnection *bus, char **_buf) {
+static int pretty_boot_time(sd_bus *bus, char **_buf) {
         char ts[FORMAT_TIMESPAN_MAX];
         struct boot_times *t;
         static char buf[4096];
@@ -376,7 +360,7 @@ static void svg_graph_box(double height, double begin, double end) {
         }
 }
 
-static int analyze_plot(DBusConnection *bus) {
+static int analyze_plot(sd_bus *bus) {
         struct unit_times *times;
         struct boot_times *boot;
         struct utsname name;
@@ -544,7 +528,7 @@ static int analyze_plot(DBusConnection *bus) {
         return 0;
 }
 
-static int analyze_blame(DBusConnection *bus) {
+static int analyze_blame(sd_bus *bus) {
         struct unit_times *times;
         unsigned i;
         int n;
@@ -566,7 +550,7 @@ static int analyze_blame(DBusConnection *bus) {
         return 0;
 }
 
-static int analyze_time(DBusConnection *bus) {
+static int analyze_time(sd_bus *bus) {
         _cleanup_free_ char *buf = NULL;
         int r;
 
@@ -578,7 +562,7 @@ static int analyze_time(DBusConnection *bus) {
         return 0;
 }
 
-static int graph_one_property(const char *name, const char *prop, DBusMessageIter *iter) {
+static int graph_one_property(const char *name, sd_bus_message *m) {
 
         static const char * const colors[] = {
                 "Requires",              "[color=\"black\"]",
@@ -592,11 +576,21 @@ static int graph_one_property(const char *name, const char *prop, DBusMessageIte
         };
 
         const char *c = NULL;
+        const char *s;
+        const char *prop;
         unsigned i;
+        int r;
+
 
         assert(name);
-        assert(prop);
-        assert(iter);
+        assert(m);
+
+        r = sd_bus_message_enter_container(m, SD_BUS_TYPE_DICT_ENTRY, "sv");
+        if (r < 0)
+                return r;
+        r = sd_bus_message_read_basic(m, SD_BUS_TYPE_STRING, &prop);
+        if (r < 0)
+                return r;
 
         for (i = 0; i < ELEMENTSOF(colors); i += 2)
                 if (streq(colors[i], prop)) {
@@ -605,77 +599,61 @@ static int graph_one_property(const char *name, const char *prop, DBusMessageIte
                 }
 
         if (!c)
-                return 0;
+                goto finish;
 
         if (arg_dot != DEP_ALL)
                 if ((arg_dot == DEP_ORDER) != streq(prop, "After"))
-                        return 0;
+                        goto finish;
 
-        if (dbus_message_iter_get_arg_type(iter) == DBUS_TYPE_ARRAY &&
-            dbus_message_iter_get_element_type(iter) == DBUS_TYPE_STRING) {
-                DBusMessageIter sub;
+        r = sd_bus_message_enter_container(m, SD_BUS_TYPE_VARIANT, "as");
+        if (r == -ENXIO)
+                goto finish;
+        if (r < 0)
+                return r;
 
-                dbus_message_iter_recurse(iter, &sub);
+        r = sd_bus_message_enter_container(m, SD_BUS_TYPE_ARRAY, "s");
+        if (r < 0)
+                return r;
 
-                for (dbus_message_iter_recurse(iter, &sub);
-                     dbus_message_iter_get_arg_type(&sub) != DBUS_TYPE_INVALID;
-                     dbus_message_iter_next(&sub)) {
-                        const char *s;
-
-                        assert(dbus_message_iter_get_arg_type(&sub) == DBUS_TYPE_STRING);
-                        dbus_message_iter_get_basic(&sub, &s);
-                        printf("\t\"%s\"->\"%s\" %s;\n", name, s, c);
-                }
-        }
-
+        while ((r = sd_bus_message_read_basic(m, SD_BUS_TYPE_STRING, &s)) > 0)
+                printf("\t\"%s\"->\"%s\" %s;\n", name, s, c);
+        if (r < 0)
+                return r;
+finish:
+        r = bus_exit_container_force(m, SD_BUS_TYPE_DICT_ENTRY);
+        if (r < 0)
+                return r;
         return 0;
 }
 
-static int graph_one(DBusConnection *bus, const struct unit_info *u) {
-        _cleanup_dbus_message_unref_ DBusMessage *reply = NULL;
-        const char *interface = "org.freedesktop.systemd1.Unit";
+static int graph_one(sd_bus *bus, const struct unit_info *u) {
+        _cleanup_sd_bus_message_unref_ sd_bus_message *reply = NULL;
         int r;
-        DBusMessageIter iter, sub, sub2, sub3;
 
         assert(bus);
         assert(u);
 
-        r = bus_method_call_with_reply(
+        r = sd_bus_call_method(
                         bus,
                         "org.freedesktop.systemd1",
                         u->unit_path,
                         "org.freedesktop.DBus.Properties",
                         "GetAll",
-                        &reply,
                         NULL,
-                        DBUS_TYPE_STRING, &interface,
-                        DBUS_TYPE_INVALID);
+                        &reply,
+                        "s",
+                        "org.freedesktop.systemd1.Unit");
         if (r < 0)
                 return r;
 
-        if (!dbus_message_iter_init(reply, &iter) ||
-            dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_ARRAY ||
-            dbus_message_iter_get_element_type(&iter) != DBUS_TYPE_DICT_ENTRY)  {
+        r = sd_bus_message_enter_container(reply, SD_BUS_TYPE_ARRAY, "{sv}");
+        if (r < 0) {
                 log_error("Failed to parse reply.");
                 return -EIO;
         }
 
-        for (dbus_message_iter_recurse(&iter, &sub);
-             dbus_message_iter_get_arg_type(&sub) != DBUS_TYPE_INVALID;
-             dbus_message_iter_next(&sub)) {
-                const char *prop;
-
-                assert(dbus_message_iter_get_arg_type(&sub) == DBUS_TYPE_DICT_ENTRY);
-                dbus_message_iter_recurse(&sub, &sub2);
-
-                if (bus_iter_get_basic_and_next(&sub2, DBUS_TYPE_STRING, &prop, true) < 0 ||
-                    dbus_message_iter_get_arg_type(&sub2) != DBUS_TYPE_VARIANT) {
-                        log_error("Failed to parse reply.");
-                        return -EIO;
-                }
-
-                dbus_message_iter_recurse(&sub2, &sub3);
-                r = graph_one_property(u->id, prop, &sub3);
+        while (sd_bus_message_exit_container(reply) == -EBUSY) {
+                r = graph_one_property(u->id, reply);
                 if (r < 0)
                         return r;
         }
@@ -683,38 +661,34 @@ static int graph_one(DBusConnection *bus, const struct unit_info *u) {
         return 0;
 }
 
-static int dot(DBusConnection *bus) {
-        _cleanup_dbus_message_unref_ DBusMessage *reply = NULL;
-        DBusMessageIter iter, sub;
+static int dot(sd_bus *bus) {
+        _cleanup_sd_bus_message_unref_ sd_bus_message *reply = NULL;
         int r;
 
-        r = bus_method_call_with_reply(
+        r = sd_bus_call_method(
                         bus,
                         "org.freedesktop.systemd1",
                         "/org/freedesktop/systemd1",
                         "org.freedesktop.systemd1.Manager",
                         "ListUnits",
-                        &reply,
                         NULL,
-                        DBUS_TYPE_INVALID);
+                        &reply,
+                        NULL);
         if (r < 0)
                 return r;
 
-        if (!dbus_message_iter_init(reply, &iter) ||
-            dbus_message_iter_get_arg_type(&iter) != DBUS_TYPE_ARRAY ||
-            dbus_message_iter_get_element_type(&iter) != DBUS_TYPE_STRUCT)  {
+        r = sd_bus_message_enter_container(reply, SD_BUS_TYPE_ARRAY, "(ssssssouso)");
+        if (r < 0) {
                 log_error("Failed to parse reply.");
-                return -EIO;
+                return r;
         }
 
         printf("digraph systemd {\n");
 
-        for (dbus_message_iter_recurse(&iter, &sub);
-             dbus_message_iter_get_arg_type(&sub) != DBUS_TYPE_INVALID;
-             dbus_message_iter_next(&sub)) {
+        while (sd_bus_message_exit_container(reply) == -EBUSY) {
                 struct unit_info u;
 
-                r = bus_parse_unit_info(&sub, &u);
+                r = bus_parse_unit_info(reply, &u);
                 if (r < 0)
                         return -EIO;
 
@@ -820,7 +794,7 @@ static int parse_argv(int argc, char *argv[])
 
 int main(int argc, char *argv[]) {
         int r;
-        DBusConnection *bus = NULL;
+        sd_bus *bus = NULL;
 
         setlocale(LC_ALL, "");
         setlocale(LC_NUMERIC, "C"); /* we want to format/parse floats in C style */
@@ -833,8 +807,12 @@ int main(int argc, char *argv[]) {
         else if (r <= 0)
                 return EXIT_SUCCESS;
 
-        bus = dbus_bus_get(arg_scope == UNIT_FILE_SYSTEM ? DBUS_BUS_SYSTEM : DBUS_BUS_SESSION, NULL);
-        if (!bus)
+        if (arg_scope == UNIT_FILE_SYSTEM)
+                r = sd_bus_open_system(&bus);
+        else
+                r = sd_bus_open_user(&bus);
+
+        if (r < 0)
                 return EXIT_FAILURE;
 
         if (!argv[optind] || streq(argv[optind], "time"))
@@ -848,7 +826,7 @@ int main(int argc, char *argv[]) {
         else
                 log_error("Unknown operation '%s'.", argv[optind]);
 
-        dbus_connection_unref(bus);
+        sd_bus_close(bus);
 
         return r < 0 ? EXIT_FAILURE : EXIT_SUCCESS;
 }

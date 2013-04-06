@@ -315,12 +315,11 @@ systemd_analyze_SOURCES = \
 	src/analyze/systemd-analyze.c
 
 systemd_analyze_CFLAGS = \
-	$(AM_CFLAGS) \
-	$(DBUS_CFLAGS)
+	$(AM_CFLAGS)
 
 systemd_analyze_LDADD = \
 	libsystemd-shared.la \
-	libsystemd-dbus.la
+	libsystemd-sd-bus.la
 
 dist_bashcompletion_DATA = \
 	shell-completion/bash/journalctl \
