@@ -699,6 +699,20 @@ libsystemd_dbus_la_CFLAGS = \
 libsystemd_dbus_la_LIBADD = \
 	$(DBUS_LIBS)
 
+#-------------------------------------------------------------------------------
+noinst_LTLIBRARIES += \
+	libsystemd-sd-bus.la
+
+libsystemd_sd_bus_la_SOURCES = \
+	src/shared/sd-bus-common.c \
+	src/shared/sd-bus-common.h
+
+libsystemd_sd_bus_la_CFLAGS = \
+	$(AM_CFLAGS)
+
+libsystemd_sd_bus_la_LIBADD = \
+	libsystemd-bus.la
+
 # ------------------------------------------------------------------------------
 noinst_LTLIBRARIES += \
 	libsystemd-units.la
