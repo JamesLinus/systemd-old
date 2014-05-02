@@ -52,8 +52,7 @@ static bool arg_no_pager = false;
 static bool arg_legend = true;
 static const char *arg_kill_who = NULL;
 static int arg_signal = SIGTERM;
-static BusTransport arg_transport = BUS_TRANSPORT_LOCAL;
-static char *arg_host = NULL;
+static BusTransport arg_transport = {BUS_TRANSPORT_LOCAL};
 
 static void pager_open_if_enabled(void) {
 
@@ -123,7 +122,7 @@ static int show_unit_cgroup(sd_bus *bus, const char *unit, pid_t leader) {
         assert(bus);
         assert(unit);
 
-        if (arg_transport == BUS_TRANSPORT_REMOTE)
+        if (arg_transport.type == BUS_TRANSPORT_REMOTE)
                 return 0;
 
         path = unit_dbus_path_from_name(unit);
@@ -672,7 +671,7 @@ static int login_machine(sd_bus *bus, char **args, unsigned n) {
         assert(bus);
         assert(args);
 
-        if (arg_transport != BUS_TRANSPORT_LOCAL) {
+        if (arg_transport.type != BUS_TRANSPORT_LOCAL) {
                 log_error("Login only supported on local machines.");
                 return -ENOTSUP;
         }
@@ -887,13 +886,13 @@ static int parse_argv(int argc, char *argv[]) {
                         break;
 
                 case 'H':
-                        arg_transport = BUS_TRANSPORT_REMOTE;
-                        arg_host = optarg;
+                        arg_transport.type = BUS_TRANSPORT_REMOTE;
+                        arg_transport.host = optarg;
                         break;
 
                 case 'M':
-                        arg_transport = BUS_TRANSPORT_CONTAINER;
-                        arg_host = optarg;
+                        arg_transport.type = BUS_TRANSPORT_CONTAINER;
+                        arg_transport.host = optarg;
                         break;
 
                 case '?':
@@ -1000,7 +999,7 @@ int main(int argc, char*argv[]) {
         if (r <= 0)
                 goto finish;
 
-        r = bus_open_transport(arg_transport, arg_host, false, &bus);
+        r = bus_open_transport(&arg_transport, &bus);
         if (r < 0) {
                 log_error("Failed to create bus connection: %s", strerror(-r));
                 goto finish;

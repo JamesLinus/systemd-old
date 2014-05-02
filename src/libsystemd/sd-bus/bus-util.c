@@ -1116,32 +1116,39 @@ int bus_map_all_properties(sd_bus *bus,
         return bus_message_map_all_properties(bus, m, map, userdata);
 }
 
-int bus_open_transport(BusTransport transport, const char *host, bool user, sd_bus **bus) {
+static int _bus_open_transport(BusTransport *transport, bool systemd, sd_bus **bus) {
         int r;
 
-        assert(transport >= 0);
-        assert(transport < _BUS_TRANSPORT_MAX);
+        assert(transport);
+        assert(transport->type >= 0);
+        assert(transport->type < _BUS_TRANSPORT_MAX);
         assert(bus);
 
-        assert_return((transport == BUS_TRANSPORT_LOCAL) == !host, -EINVAL);
-        assert_return(transport == BUS_TRANSPORT_LOCAL || !user, -ENOTSUP);
+        assert_return((transport->type == BUS_TRANSPORT_LOCAL) == !transport->host, -EINVAL);
+        assert_return(transport->type == BUS_TRANSPORT_LOCAL || !transport->user, -ENOTSUP);
 
-        switch (transport) {
+        switch (transport->type) {
 
         case BUS_TRANSPORT_LOCAL:
-                if (user)
-                        r = sd_bus_default_user(bus);
-                else
-                        r = sd_bus_default_system(bus);
-
+                if (transport->user) {
+                        if (systemd)
+                                r = bus_open_user_systemd(bus);
+                        else
+                                r = sd_bus_default_user(bus);
+                } else {
+                        if (systemd)
+                                r = bus_open_system_systemd(bus);
+                        else
+                                r = sd_bus_default_system(bus);
+                }
                 break;
 
         case BUS_TRANSPORT_REMOTE:
-                r = sd_bus_open_system_remote(bus, host);
+                r = sd_bus_open_system_remote(bus, transport->host);
                 break;
 
         case BUS_TRANSPORT_CONTAINER:
-                r = sd_bus_open_system_container(bus, host);
+                r = sd_bus_open_system_container(bus, transport->host);
                 break;
 
         default:
@@ -1151,39 +1158,11 @@ int bus_open_transport(BusTransport transport, const char *host, bool user, sd_b
         return r;
 }
 
-int bus_open_transport_systemd(BusTransport transport, const char *host, bool user, sd_bus **bus) {
-        int r;
-
-        assert(transport >= 0);
-        assert(transport < _BUS_TRANSPORT_MAX);
-        assert(bus);
-
-        assert_return((transport == BUS_TRANSPORT_LOCAL) == !host, -EINVAL);
-        assert_return(transport == BUS_TRANSPORT_LOCAL || !user, -ENOTSUP);
-
-        switch (transport) {
-
-        case BUS_TRANSPORT_LOCAL:
-                if (user)
-                        r = bus_open_user_systemd(bus);
-                else
-                        r = bus_open_system_systemd(bus);
-
-                break;
-
-        case BUS_TRANSPORT_REMOTE:
-                r = sd_bus_open_system_remote(bus, host);
-                break;
-
-        case BUS_TRANSPORT_CONTAINER:
-                r = sd_bus_open_system_container(bus, host);
-                break;
-
-        default:
-                assert_not_reached("Hmm, unknown transport type.");
-        }
-
-        return r;
+int bus_open_transport(BusTransport *transport, sd_bus **bus) {
+        return _bus_open_transport(transport, false, bus);
+}
+int bus_open_transport_systemd(BusTransport *transport, sd_bus **bus) {
+        return _bus_open_transport(transport, true, bus);
 }
 
 int bus_property_get_bool(

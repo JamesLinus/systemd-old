@@ -43,8 +43,7 @@
 #include "fileio.h"
 
 static bool arg_ask_password = true;
-static BusTransport arg_transport = BUS_TRANSPORT_LOCAL;
-static char *arg_host = NULL;
+static BusTransport arg_transport = {BUS_TRANSPORT_LOCAL};
 static bool arg_transient = false;
 static bool arg_pretty = false;
 static bool arg_static = false;
@@ -55,7 +54,7 @@ static void polkit_agent_open_if_enabled(void) {
         if (!arg_ask_password)
                 return;
 
-        if (arg_transport != BUS_TRANSPORT_LOCAL)
+        if (arg_transport.type != BUS_TRANSPORT_LOCAL)
                 return;
 
         polkit_agent_open();
@@ -400,13 +399,13 @@ static int parse_argv(int argc, char *argv[]) {
                         return 0;
 
                 case 'H':
-                        arg_transport = BUS_TRANSPORT_REMOTE;
-                        arg_host = optarg;
+                        arg_transport.type = BUS_TRANSPORT_REMOTE;
+                        arg_transport.host = optarg;
                         break;
 
                 case 'M':
-                        arg_transport = BUS_TRANSPORT_CONTAINER;
-                        arg_host = optarg;
+                        arg_transport.type = BUS_TRANSPORT_CONTAINER;
+                        arg_transport.host = optarg;
                         break;
 
                 case ARG_TRANSIENT:
@@ -527,7 +526,7 @@ int main(int argc, char *argv[]) {
         if (r <= 0)
                 goto finish;
 
-        r = bus_open_transport(arg_transport, arg_host, false, &bus);
+        r = bus_open_transport(&arg_transport, &bus);
         if (r < 0) {
                 log_error("Failed to create bus connection: %s", strerror(-r));
                 goto finish;

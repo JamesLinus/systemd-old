@@ -37,9 +37,7 @@ static const char *arg_unit = NULL;
 static const char *arg_description = NULL;
 static const char *arg_slice = NULL;
 static bool arg_send_sighup = false;
-static BusTransport arg_transport = BUS_TRANSPORT_LOCAL;
-static const char *arg_host = NULL;
-static bool arg_user = false;
+static BusTransport arg_transport = {BUS_TRANSPORT_LOCAL};
 static const char *arg_service_type = NULL;
 static const char *arg_exec_user = NULL;
 static const char *arg_exec_group = NULL;
@@ -130,11 +128,11 @@ static int parse_argv(int argc, char *argv[]) {
                         return 0;
 
                 case ARG_USER:
-                        arg_user = true;
+                        arg_transport.user = true;
                         break;
 
                 case ARG_SYSTEM:
-                        arg_user = false;
+                        arg_transport.user = false;
                         break;
 
                 case ARG_SCOPE:
@@ -162,13 +160,13 @@ static int parse_argv(int argc, char *argv[]) {
                         break;
 
                 case 'H':
-                        arg_transport = BUS_TRANSPORT_REMOTE;
-                        arg_host = optarg;
+                        arg_transport.type = BUS_TRANSPORT_REMOTE;
+                        arg_transport.host = optarg;
                         break;
 
                 case 'M':
-                        arg_transport = BUS_TRANSPORT_CONTAINER;
-                        arg_host = optarg;
+                        arg_transport.type = BUS_TRANSPORT_CONTAINER;
+                        arg_transport.host = optarg;
                         break;
 
                 case ARG_SERVICE_TYPE:
@@ -219,12 +217,12 @@ static int parse_argv(int argc, char *argv[]) {
                 return -EINVAL;
         }
 
-        if (arg_user && arg_transport != BUS_TRANSPORT_LOCAL) {
+        if (arg_transport.user && arg_transport.type != BUS_TRANSPORT_LOCAL) {
                 log_error("Execution in user context is not supported on non-local systems.");
                 return -EINVAL;
         }
 
-        if (arg_scope && arg_transport != BUS_TRANSPORT_LOCAL) {
+        if (arg_scope && arg_transport.type != BUS_TRANSPORT_LOCAL) {
                 log_error("Scope execution is not supported on non-local systems.");
                 return -EINVAL;
         }
@@ -590,7 +588,7 @@ int main(int argc, char* argv[]) {
                 arg_description = description;
         }
 
-        r = bus_open_transport_systemd(arg_transport, arg_host, arg_user, &bus);
+        r = bus_open_transport_systemd(&arg_transport, &bus);
         if (r < 0) {
                 log_error("Failed to create bus connection: %s", strerror(-r));
                 goto finish;

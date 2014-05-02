@@ -27,12 +27,16 @@
 #include "time-util.h"
 #include "util.h"
 
-typedef enum BusTransport {
-        BUS_TRANSPORT_LOCAL,
-        BUS_TRANSPORT_REMOTE,
-        BUS_TRANSPORT_CONTAINER,
-        _BUS_TRANSPORT_MAX,
-        _BUS_TRANSPORT_INVALID = -1
+typedef struct BusTransport {
+        enum {
+                BUS_TRANSPORT_LOCAL,
+                BUS_TRANSPORT_REMOTE,
+                BUS_TRANSPORT_CONTAINER,
+                _BUS_TRANSPORT_MAX,
+                _BUS_TRANSPORT_INVALID = -1
+        } type;
+        const char *host;
+        bool user;
 } BusTransport;
 
 typedef int (*bus_property_set_t) (sd_bus *bus, const char *member, sd_bus_message *m, sd_bus_error *error, void *userdata);
@@ -78,8 +82,8 @@ void bus_verify_polkit_async_registry_free(Hashmap *registry);
 int bus_open_system_systemd(sd_bus **_bus);
 int bus_open_user_systemd(sd_bus **_bus);
 
-int bus_open_transport(BusTransport transport, const char *host, bool user, sd_bus **bus);
-int bus_open_transport_systemd(BusTransport transport, const char *host, bool user, sd_bus **bus);
+int bus_open_transport(BusTransport *transport, sd_bus **bus);
+int bus_open_transport_systemd(BusTransport *transport, sd_bus **bus);
 
 int bus_print_property(const char *name, sd_bus_message *property, bool all);
 int bus_print_all_properties(sd_bus *bus, const char *dest, const char *path, char **filter, bool all);

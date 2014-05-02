@@ -131,8 +131,7 @@ static enum action {
         ACTION_CANCEL_SHUTDOWN,
         _ACTION_MAX
 } arg_action = ACTION_SYSTEMCTL;
-static BusTransport arg_transport = BUS_TRANSPORT_LOCAL;
-static char *arg_host = NULL;
+static BusTransport arg_transport = {BUS_TRANSPORT_LOCAL};
 static unsigned arg_lines = 10;
 static OutputMode arg_output = OUTPUT_SHORT;
 static bool arg_plain = false;
@@ -167,7 +166,7 @@ static void ask_password_agent_open_if_enabled(void) {
         if (arg_scope != UNIT_FILE_SYSTEM)
                 return;
 
-        if (arg_transport != BUS_TRANSPORT_LOCAL)
+        if (arg_transport.type != BUS_TRANSPORT_LOCAL)
                 return;
 
         ask_password_agent_open();
@@ -184,7 +183,7 @@ static void polkit_agent_open_if_enabled(void) {
         if (arg_scope != UNIT_FILE_SYSTEM)
                 return;
 
-        if (arg_transport != BUS_TRANSPORT_LOCAL)
+        if (arg_transport.type != BUS_TRANSPORT_LOCAL)
                 return;
 
         polkit_agent_open();
@@ -3505,12 +3504,12 @@ static void print_status_info(
 
         if (i->control_group &&
             (i->main_pid > 0 || i->control_pid > 0 ||
-             ((arg_transport != BUS_TRANSPORT_LOCAL && arg_transport != BUS_TRANSPORT_CONTAINER) || cg_is_empty_recursive(SYSTEMD_CGROUP_CONTROLLER, i->control_group, false) == 0))) {
+             ((arg_transport.type != BUS_TRANSPORT_LOCAL && arg_transport.type != BUS_TRANSPORT_CONTAINER) || cg_is_empty_recursive(SYSTEMD_CGROUP_CONTROLLER, i->control_group, false) == 0))) {
                 unsigned c;
 
                 printf("   CGroup: %s\n", i->control_group);
 
-                if (arg_transport == BUS_TRANSPORT_LOCAL || arg_transport == BUS_TRANSPORT_CONTAINER) {
+                if (arg_transport.type == BUS_TRANSPORT_LOCAL || arg_transport.type == BUS_TRANSPORT_CONTAINER) {
                         unsigned k = 0;
                         pid_t extra[2];
                         static const char prefix[] = "           ";
@@ -3531,7 +3530,7 @@ static void print_status_info(
                 }
         }
 
-        if (i->id && arg_transport == BUS_TRANSPORT_LOCAL) {
+        if (i->id && arg_transport.type == BUS_TRANSPORT_LOCAL) {
                 show_journal_by_unit(stdout,
                                      i->id,
                                      arg_output,
@@ -4363,7 +4362,7 @@ static int show_system_status(sd_bus *bus) {
         } else
                 on = off = "";
 
-        printf("%s%s%s %s\n", on, draw_special_char(DRAW_BLACK_CIRCLE), off, arg_host ? arg_host : hn);
+        printf("%s%s%s %s\n", on, draw_special_char(DRAW_BLACK_CIRCLE), off, arg_transport.host ? arg_transport.host : hn);
 
         printf("    State: %s%s%s\n",
                on, strna(mi.state), off);
@@ -4376,7 +4375,7 @@ static int show_system_status(sd_bus *bus) {
                format_timestamp_relative(since1, sizeof(since1), mi.timestamp));
 
         printf("   CGroup: %s\n", mi.control_group ?: "/");
-        if (arg_transport == BUS_TRANSPORT_LOCAL || arg_transport == BUS_TRANSPORT_CONTAINER) {
+        if (arg_transport.type == BUS_TRANSPORT_LOCAL || arg_transport.type == BUS_TRANSPORT_CONTAINER) {
                 int flags =
                         arg_all * OUTPUT_SHOW_ALL |
                         (!on_tty() || pager_have()) * OUTPUT_FULL_WIDTH |
@@ -6113,13 +6112,13 @@ static int systemctl_parse_argv(int argc, char *argv[]) {
                         break;
 
                 case 'H':
-                        arg_transport = BUS_TRANSPORT_REMOTE;
-                        arg_host = optarg;
+                        arg_transport.type = BUS_TRANSPORT_REMOTE;
+                        arg_transport.host = optarg;
                         break;
 
                 case 'M':
-                        arg_transport = BUS_TRANSPORT_CONTAINER;
-                        arg_host = optarg;
+                        arg_transport.type = BUS_TRANSPORT_CONTAINER;
+                        arg_transport.host = optarg;
                         break;
 
                 case ARG_RUNTIME:
@@ -6192,7 +6191,7 @@ static int systemctl_parse_argv(int argc, char *argv[]) {
                         assert_not_reached("Unhandled option");
                 }
 
-        if (arg_transport != BUS_TRANSPORT_LOCAL && arg_scope != UNIT_FILE_SYSTEM) {
+        if (arg_transport.type != BUS_TRANSPORT_LOCAL && arg_scope != UNIT_FILE_SYSTEM) {
                 log_error("Cannot access user instance remotely.");
                 return -EINVAL;
         }
@@ -7071,8 +7070,9 @@ int main(int argc, char*argv[]) {
                 goto finish;
         }
 
+        arg_transport.user = arg_scope != UNIT_FILE_SYSTEM;
         if (!avoid_bus())
-                r = bus_open_transport_systemd(arg_transport, arg_host, arg_scope != UNIT_FILE_SYSTEM, &bus);
+                r = bus_open_transport_systemd(&arg_transport, &bus);
 
         /* systemctl_main() will print an error message for the bus
          * connection, but only if it needs to */

@@ -41,9 +41,7 @@ static bool arg_acquired = false;
 static bool arg_activatable = false;
 static bool arg_show_machine = false;
 static char **arg_matches = NULL;
-static BusTransport arg_transport = BUS_TRANSPORT_LOCAL;
-static char *arg_host = NULL;
-static bool arg_user = false;
+static BusTransport arg_transport = {BUS_TRANSPORT_LOCAL};
 
 static void pager_open_if_enabled(void) {
 
@@ -406,11 +404,11 @@ static int parse_argv(int argc, char *argv[]) {
                         break;
 
                 case ARG_USER:
-                        arg_user = true;
+                        arg_transport.user = true;
                         break;
 
                 case ARG_SYSTEM:
-                        arg_user = false;
+                        arg_transport.user = false;
                         break;
 
                 case ARG_ADDRESS:
@@ -439,13 +437,13 @@ static int parse_argv(int argc, char *argv[]) {
                         break;
 
                 case 'H':
-                        arg_transport = BUS_TRANSPORT_REMOTE;
-                        arg_host = optarg;
+                        arg_transport.type = BUS_TRANSPORT_REMOTE;
+                        arg_transport.host = optarg;
                         break;
 
                 case 'M':
-                        arg_transport = BUS_TRANSPORT_CONTAINER;
-                        arg_host = optarg;
+                        arg_transport.type = BUS_TRANSPORT_CONTAINER;
+                        arg_transport.host = optarg;
                         break;
 
                 case '?':
@@ -528,21 +526,21 @@ int main(int argc, char *argv[]) {
         if (arg_address)
                 r = sd_bus_set_address(bus, arg_address);
         else {
-                switch (arg_transport) {
+                switch (arg_transport.type) {
 
                 case BUS_TRANSPORT_LOCAL:
-                        if (arg_user)
+                        if (arg_transport.user)
                                 r = bus_set_address_user(bus);
                         else
                                 r = bus_set_address_system(bus);
                         break;
 
                 case BUS_TRANSPORT_REMOTE:
-                        r = bus_set_address_system_remote(bus, arg_host);
+                        r = bus_set_address_system_remote(bus, arg_transport.host);
                         break;
 
                 case BUS_TRANSPORT_CONTAINER:
-                        r = bus_set_address_system_container(bus, arg_host);
+                        r = bus_set_address_system_container(bus, arg_transport.host);
                         break;
 
                 default:
