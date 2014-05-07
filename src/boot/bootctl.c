@@ -31,6 +31,7 @@
 #include "build.h"
 #include "util.h"
 #include "utf8.h"
+#include "xyzctl.h"
 
 static void help(void) {
         printf("%s [OPTIONS...] COMMAND ...\n\n"
@@ -129,7 +130,7 @@ static void boot_info_free(struct boot_info *info) {
         free(info);
 }
 
-static int show_status(char **args, unsigned n) {
+static int show_status(sd_bus *_unused, char **args, unsigned n) {
         char buf[64];
         struct boot_info *info;
         int err;
@@ -193,78 +194,11 @@ static int show_status(char **args, unsigned n) {
         return err;
 }
 
-static int bootctl_main(int argc, char *argv[]) {
-        static const struct {
-                const char* verb;
-                const enum {
-                        MORE,
-                        LESS,
-                        EQUAL
-                } argc_cmp;
-                const int argc;
-                int (* const dispatch)(char **args, unsigned n);
-        } verbs[] = {
-                { "status",                LESS,   1, show_status      },
-        };
-
-        int left;
-        unsigned i;
-
-        assert(argc >= 0);
-        assert(argv);
-
-        left = argc - optind;
-
-        if (left <= 0)
-                /* Special rule: no arguments means "status" */
-                i = 0;
-        else {
-                if (streq(argv[optind], "help")) {
-                        help();
-                        return 0;
-                }
-
-                for (i = 0; i < ELEMENTSOF(verbs); i++)
-                        if (streq(argv[optind], verbs[i].verb))
-                                break;
-
-                if (i >= ELEMENTSOF(verbs)) {
-                        log_error("Unknown operation %s", argv[optind]);
-                        return -EINVAL;
-                }
-        }
-
-        switch (verbs[i].argc_cmp) {
-
-        case EQUAL:
-                if (left != verbs[i].argc) {
-                        log_error("Invalid number of arguments.");
-                        return -EINVAL;
-                }
-                break;
-
-        case MORE:
-                if (left < verbs[i].argc) {
-                        log_error("Too few arguments.");
-                        return -EINVAL;
-                }
-                break;
-
-        case LESS:
-                if (left > verbs[i].argc) {
-                        log_error("Too many arguments.");
-                        return -EINVAL;
-                }
-                break;
-
-        default:
-                assert_not_reached("Unknown comparison operator.");
-        }
-
-        return verbs[i].dispatch(argv + optind, left);
-}
-
 int main(int argc, char *argv[]) {
+        static const xyzctl_verb verbs[] = {
+                { "status", LESS, 1, show_status },
+                {}
+        };
         int r;
 
         log_parse_environment();
@@ -274,8 +208,8 @@ int main(int argc, char *argv[]) {
         if (r <= 0)
                 goto finish;
 
-        r = bootctl_main(argc, argv);
+        r = xyzctl_main(verbs, NULL, 0, argv + optind, &help, false, false);
 
- finish:
+finish:
         return r < 0 ? EXIT_FAILURE : EXIT_SUCCESS;
 }

@@ -28,40 +28,19 @@
 #include <string.h>
 #include <sys/timex.h>
 
+#include "xyzctl.h"
 #include "sd-bus.h"
 #include "bus-util.h"
 #include "bus-error.h"
 #include "util.h"
-#include "spawn-polkit-agent.h"
 #include "build.h"
 #include "strv.h"
-#include "pager.h"
 #include "time-dst.h"
 
 static bool arg_no_pager = false;
 static bool arg_ask_password = true;
 static BusTransport arg_transport = {BUS_TRANSPORT_LOCAL};
 static bool arg_adjust_system_clock = false;
-
-static void pager_open_if_enabled(void) {
-
-        if (arg_no_pager)
-                return;
-
-        pager_open(false);
-}
-
-static void polkit_agent_open_if_enabled(void) {
-
-        /* Open the polkit agent as a child process if necessary */
-        if (!arg_ask_password)
-                return;
-
-        if (arg_transport.type != BUS_TRANSPORT_LOCAL)
-                return;
-
-        polkit_agent_open();
-}
 
 typedef struct StatusInfo {
         usec_t time;
@@ -251,8 +230,6 @@ static int set_time(sd_bus *bus, char **args, unsigned n) {
         assert(args);
         assert(n == 2);
 
-        polkit_agent_open_if_enabled();
-
         r = parse_timestamp(args[1], &t);
         if (r < 0) {
                 log_error("Failed to parse time specification: %s", args[1]);
@@ -280,8 +257,6 @@ static int set_timezone(sd_bus *bus, char **args, unsigned n) {
         assert(args);
         assert(n == 2);
 
-        polkit_agent_open_if_enabled();
-
         r = sd_bus_call_method(bus,
                                "org.freedesktop.timedate1",
                                "/org/freedesktop/timedate1",
@@ -302,8 +277,6 @@ static int set_local_rtc(sd_bus *bus, char **args, unsigned n) {
 
         assert(args);
         assert(n == 2);
-
-        polkit_agent_open_if_enabled();
 
         b = parse_boolean(args[1]);
         if (b < 0) {
@@ -331,8 +304,6 @@ static int set_ntp(sd_bus *bus, char **args, unsigned n) {
 
         assert(args);
         assert(n == 2);
-
-        polkit_agent_open_if_enabled();
 
         b = parse_boolean(args[1]);
         if (b < 0) {
@@ -367,7 +338,6 @@ static int list_timezones(sd_bus *bus, char **args, unsigned n) {
                 return r;
         }
 
-        pager_open_if_enabled();
         strv_print(zones);
 
         return 0;
@@ -463,87 +433,16 @@ static int parse_argv(int argc, char *argv[]) {
         return 1;
 }
 
-static int timedatectl_main(sd_bus *bus, int argc, char *argv[]) {
-
-        static const struct {
-                const char* verb;
-                const enum {
-                        MORE,
-                        LESS,
-                        EQUAL
-                } argc_cmp;
-                const int argc;
-                int (* const dispatch)(sd_bus *bus, char **args, unsigned n);
-        } verbs[] = {
-                { "status",                LESS,   1, show_status      },
-                { "set-time",              EQUAL,  2, set_time         },
-                { "set-timezone",          EQUAL,  2, set_timezone     },
-                { "list-timezones",        EQUAL,  1, list_timezones   },
-                { "set-local-rtc",         EQUAL,  2, set_local_rtc    },
-                { "set-ntp",               EQUAL,  2, set_ntp,         },
-        };
-
-        int left;
-        unsigned i;
-
-        assert(argc >= 0);
-        assert(argv);
-
-        left = argc - optind;
-
-        if (left <= 0)
-                /* Special rule: no arguments means "status" */
-                i = 0;
-        else {
-                if (streq(argv[optind], "help")) {
-                        help();
-                        return 0;
-                }
-
-                for (i = 0; i < ELEMENTSOF(verbs); i++)
-                        if (streq(argv[optind], verbs[i].verb))
-                                break;
-
-                if (i >= ELEMENTSOF(verbs)) {
-                        log_error("Unknown operation %s", argv[optind]);
-                        return -EINVAL;
-                }
-        }
-
-        switch (verbs[i].argc_cmp) {
-
-        case EQUAL:
-                if (left != verbs[i].argc) {
-                        log_error("Invalid number of arguments.");
-                        return -EINVAL;
-                }
-
-                break;
-
-        case MORE:
-                if (left < verbs[i].argc) {
-                        log_error("Too few arguments.");
-                        return -EINVAL;
-                }
-
-                break;
-
-        case LESS:
-                if (left > verbs[i].argc) {
-                        log_error("Too many arguments.");
-                        return -EINVAL;
-                }
-
-                break;
-
-        default:
-                assert_not_reached("Unknown comparison operator.");
-        }
-
-        return verbs[i].dispatch(bus, argv + optind, left);
-}
-
 int main(int argc, char *argv[]) {
+        static const xyzctl_verb verbs[] = {
+                { "status",         LESS,  1, show_status,    XYZCTL_BUS                 },
+                { "set-time",       EQUAL, 2, set_time,       XYZCTL_BUS | XYZCTL_POLKIT },
+                { "set-timezone",   EQUAL, 2, set_timezone,   XYZCTL_BUS | XYZCTL_POLKIT },
+                { "list-timezones", EQUAL, 1, list_timezones, XYZCTL_BUS | XYZCTL_PAGER  },
+                { "set-local-rtc",  EQUAL, 2, set_local_rtc,  XYZCTL_BUS | XYZCTL_POLKIT },
+                { "set-ntp",        EQUAL, 2, set_ntp,        XYZCTL_BUS | XYZCTL_POLKIT },
+                {}
+        };
         _cleanup_bus_close_unref_ sd_bus *bus = NULL;
         int r;
 
@@ -555,16 +454,12 @@ int main(int argc, char *argv[]) {
         if (r <= 0)
                 goto finish;
 
-        r = bus_open_transport(&arg_transport, &bus);
-        if (r < 0) {
-                log_error("Failed to create bus connection: %s", strerror(-r));
-                goto finish;
-        }
+        if (arg_transport.type != BUS_TRANSPORT_LOCAL)
+                arg_ask_password = false;
 
-        r = timedatectl_main(bus, argc, argv);
+        r = bus_open_transport(&arg_transport, &bus);
+        r = xyzctl_main(verbs, bus, r, argv + optind, &help, arg_ask_password, !arg_no_pager);
 
 finish:
-        pager_close();
-
         return r < 0 ? EXIT_FAILURE : EXIT_SUCCESS;
 }

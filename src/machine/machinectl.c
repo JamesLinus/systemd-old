@@ -35,7 +35,6 @@
 #include "log.h"
 #include "util.h"
 #include "macro.h"
-#include "pager.h"
 #include "bus-util.h"
 #include "bus-error.h"
 #include "build.h"
@@ -44,6 +43,7 @@
 #include "cgroup-show.h"
 #include "cgroup-util.h"
 #include "ptyfwd.h"
+#include "xyzctl.h"
 
 static char **arg_property = NULL;
 static bool arg_all = false;
@@ -54,23 +54,12 @@ static const char *arg_kill_who = NULL;
 static int arg_signal = SIGTERM;
 static BusTransport arg_transport = {BUS_TRANSPORT_LOCAL};
 
-static void pager_open_if_enabled(void) {
-
-        /* Cache result before we open the pager */
-        if (arg_no_pager)
-                return;
-
-        pager_open(false);
-}
-
 static int list_machines(sd_bus *bus, char **args, unsigned n) {
         _cleanup_bus_message_unref_ sd_bus_message *reply = NULL;
         _cleanup_bus_error_free_ sd_bus_error error = SD_BUS_ERROR_NULL;
         const char *name, *class, *service, *object;
         unsigned k = 0;
         int r;
-
-        pager_open_if_enabled();
 
         r = sd_bus_call_method(
                                 bus,
@@ -459,8 +448,6 @@ static int show(sd_bus *bus, char **args, unsigned n) {
         assert(args);
 
         properties = !strstr(args[0], "status");
-
-        pager_open_if_enabled();
 
         if (properties && n <= 1) {
 
@@ -905,89 +892,18 @@ static int parse_argv(int argc, char *argv[]) {
         return 1;
 }
 
-static int machinectl_main(sd_bus *bus, int argc, char *argv[]) {
-
-        static const struct {
-                const char* verb;
-                const enum {
-                        MORE,
-                        LESS,
-                        EQUAL
-                } argc_cmp;
-                const int argc;
-                int (* const dispatch)(sd_bus *bus, char **args, unsigned n);
-        } verbs[] = {
-                { "list",                  LESS,   1, list_machines     },
-                { "status",                MORE,   2, show              },
-                { "show",                  MORE,   1, show              },
-                { "terminate",             MORE,   2, terminate_machine },
-                { "reboot",                MORE,   2, reboot_machine    },
-                { "poweroff",              MORE,   2, poweroff_machine  },
-                { "kill",                  MORE,   2, kill_machine      },
-                { "login",                 MORE,   2, login_machine     },
-        };
-
-        int left;
-        unsigned i;
-
-        assert(argc >= 0);
-        assert(argv);
-
-        left = argc - optind;
-
-        if (left <= 0)
-                /* Special rule: no arguments means "list" */
-                i = 0;
-        else {
-                if (streq(argv[optind], "help")) {
-                        help();
-                        return 0;
-                }
-
-                for (i = 0; i < ELEMENTSOF(verbs); i++)
-                        if (streq(argv[optind], verbs[i].verb))
-                                break;
-
-                if (i >= ELEMENTSOF(verbs)) {
-                        log_error("Unknown operation %s", argv[optind]);
-                        return -EINVAL;
-                }
-        }
-
-        switch (verbs[i].argc_cmp) {
-
-        case EQUAL:
-                if (left != verbs[i].argc) {
-                        log_error("Invalid number of arguments.");
-                        return -EINVAL;
-                }
-
-                break;
-
-        case MORE:
-                if (left < verbs[i].argc) {
-                        log_error("Too few arguments.");
-                        return -EINVAL;
-                }
-
-                break;
-
-        case LESS:
-                if (left > verbs[i].argc) {
-                        log_error("Too many arguments.");
-                        return -EINVAL;
-                }
-
-                break;
-
-        default:
-                assert_not_reached("Unknown comparison operator.");
-        }
-
-        return verbs[i].dispatch(bus, argv + optind, left);
-}
-
 int main(int argc, char*argv[]) {
+        static const xyzctl_verb verbs[] = {
+                { "list",      LESS, 1, list_machines,     XYZCTL_BUS | XYZCTL_PAGER },
+                { "status",    MORE, 2, show,              XYZCTL_BUS | XYZCTL_PAGER },
+                { "show",      MORE, 1, show,              XYZCTL_BUS | XYZCTL_PAGER },
+                { "terminate", MORE, 2, terminate_machine, XYZCTL_BUS                },
+                { "reboot",    MORE, 2, reboot_machine,    XYZCTL_BUS                },
+                { "poweroff",  MORE, 2, poweroff_machine,  XYZCTL_BUS                },
+                { "kill",      MORE, 2, kill_machine,      XYZCTL_BUS                },
+                { "login",     MORE, 2, login_machine,     XYZCTL_BUS                },
+                {}
+        };
         _cleanup_bus_close_unref_ sd_bus *bus = NULL;
         int r;
 
@@ -1000,16 +916,9 @@ int main(int argc, char*argv[]) {
                 goto finish;
 
         r = bus_open_transport(&arg_transport, &bus);
-        if (r < 0) {
-                log_error("Failed to create bus connection: %s", strerror(-r));
-                goto finish;
-        }
-
-        r = machinectl_main(bus, argc, argv);
+        r = xyzctl_main(verbs, bus, r, argv + optind, &help, false, !arg_no_pager);
 
 finish:
-        pager_close();
-
         strv_free(arg_property);
 
         return r < 0 ? EXIT_FAILURE : EXIT_SUCCESS;

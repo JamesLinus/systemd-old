@@ -40,8 +40,8 @@
 #include "unit-name.h"
 #include "special.h"
 #include "hashmap.h"
-#include "pager.h"
 #include "analyze-verify.h"
+#include "xyzctl.h"
 
 #define SCALE_X (0.1 / 1000.0)   /* pixels per us */
 #define SCALE_Y (20.0)
@@ -109,14 +109,6 @@ struct host_info {
         char *virtualization;
         char *architecture;
 };
-
-static void pager_open_if_enabled(void) {
-
-        if (arg_no_pager)
-                return;
-
-        pager_open(false);
-}
 
 static int bus_get_uint64_property(sd_bus *bus, const char *path, const char *interface, const char *property, uint64_t *val) {
         _cleanup_bus_error_free_ sd_bus_error error = SD_BUS_ERROR_NULL;
@@ -487,7 +479,7 @@ static void svg_graph_box(double height, double begin, double end) {
         }
 }
 
-static int analyze_plot(sd_bus *bus) {
+static int analyze_plot(sd_bus *bus, char **argv, unsigned argc) {
         struct unit_times *times;
         struct boot_times *boot;
         struct host_info *host = NULL;
@@ -895,11 +887,12 @@ static int list_dependencies(sd_bus *bus, const char *name) {
         return list_dependencies_one(bus, name, 0, &units, 0);
 }
 
-static int analyze_critical_chain(sd_bus *bus, char *names[]) {
+static int analyze_critical_chain(sd_bus *bus, char **args, unsigned argc) {
         struct unit_times *times;
         unsigned int i;
         Hashmap *h;
         int n, r;
+        char **names = args + 1;
 
         n = acquire_time_data(bus, &times);
         if (n <= 0)
@@ -916,8 +909,6 @@ static int analyze_critical_chain(sd_bus *bus, char *names[]) {
         }
         unit_times_hashmap = h;
 
-        pager_open_if_enabled();
-
         puts("The time after the unit is active or started is printed after the \"@\" character.\n"
              "The time the unit takes to start is printed after the \"+\" character.\n");
 
@@ -933,7 +924,7 @@ static int analyze_critical_chain(sd_bus *bus, char *names[]) {
         return 0;
 }
 
-static int analyze_blame(sd_bus *bus) {
+static int analyze_blame(sd_bus *bus, char **args, unsigned argc) {
         struct unit_times *times;
         unsigned i;
         int n;
@@ -943,8 +934,6 @@ static int analyze_blame(sd_bus *bus) {
                 return n;
 
         qsort(times, n, sizeof(struct unit_times), compare_unit_time);
-
-        pager_open_if_enabled();
 
         for (i = 0; i < (unsigned) n; i++) {
                 char ts[FORMAT_TIMESPAN_MAX];
@@ -957,7 +946,7 @@ static int analyze_blame(sd_bus *bus) {
         return 0;
 }
 
-static int analyze_time(sd_bus *bus) {
+static int analyze_time(sd_bus *bus, char **args, unsigned n) {
         _cleanup_free_ char *buf = NULL;
         int r;
 
@@ -1066,11 +1055,12 @@ static int graph_one(sd_bus *bus, const UnitInfo *u, char *patterns[]) {
         return 0;
 }
 
-static int dot(sd_bus *bus, char* patterns[]) {
+static int dot(sd_bus *bus, char **args, unsigned n) {
         _cleanup_bus_message_unref_ sd_bus_message *reply = NULL;
         _cleanup_bus_error_free_ sd_bus_error error = SD_BUS_ERROR_NULL;
         int r;
         UnitInfo u;
+        char **patterns = args + 1;
 
         r = sd_bus_call_method(
                         bus,
@@ -1116,18 +1106,11 @@ static int dot(sd_bus *bus, char* patterns[]) {
         return 0;
 }
 
-static int dump(sd_bus *bus, char **args) {
+static int dump(sd_bus *bus, char **args, unsigned n) {
         _cleanup_bus_message_unref_ sd_bus_message *reply = NULL;
         _cleanup_bus_error_free_ sd_bus_error error = SD_BUS_ERROR_NULL;
         const char *text = NULL;
         int r;
-
-        if (!strv_isempty(args)) {
-                log_error("Too many arguments.");
-                return -E2BIG;
-        }
-
-        pager_open_if_enabled();
 
         r = sd_bus_call_method(
                         bus,
@@ -1151,17 +1134,12 @@ static int dump(sd_bus *bus, char **args) {
         return 0;
 }
 
-static int set_log_level(sd_bus *bus, char **args) {
+static int set_log_level(sd_bus *bus, char **args, unsigned n) {
         _cleanup_bus_error_free_ sd_bus_error error = SD_BUS_ERROR_NULL;
         int r;
 
         assert(bus);
         assert(args);
-
-        if (strv_length(args) != 1) {
-                log_error("This command expects one argument only.");
-                return -E2BIG;
-        }
 
         r = sd_bus_set_property(
                         bus,
@@ -1171,7 +1149,7 @@ static int set_log_level(sd_bus *bus, char **args) {
                         "LogLevel",
                         &error,
                         "s",
-                        args[0]);
+                        args[1]);
         if (r < 0) {
                 log_error("Failed to issue method call: %s", bus_error_message(&error, -r));
                 return -EIO;
@@ -1180,10 +1158,11 @@ static int set_log_level(sd_bus *bus, char **args) {
         return 0;
 }
 
+static int do_verify(sd_bus *bus, char **args, unsigned n) {
+        return verify_units(args, arg_transport.user ? SYSTEMD_USER : SYSTEMD_SYSTEM, arg_man);
+}
+
 static void help(void) {
-
-        pager_open_if_enabled();
-
         printf("%s [OPTIONS...] {COMMAND} ...\n\n"
                "Profile systemd, show unit dependencies, check unit files.\n\n"
                "  -h --help               Show this help\n"
@@ -1340,6 +1319,18 @@ static int parse_argv(int argc, char *argv[]) {
 }
 
 int main(int argc, char *argv[]) {
+        static const xyzctl_verb verbs[] = {
+                { "time",           LESS,  1, analyze_time,           XYZCTL_BUS                },
+                { "blame",          LESS,  1, analyze_blame,          XYZCTL_BUS | XYZCTL_PAGER },
+                { "critical-chain", MORE,  1, analyze_critical_chain, XYZCTL_BUS | XYZCTL_PAGER },
+                { "plot",           LESS,  1, analyze_plot,           XYZCTL_BUS                },
+                { "dot",            MORE,  1, dot,                    XYZCTL_BUS                },
+                { "dump",           LESS,  1, dump,                   XYZCTL_BUS | XYZCTL_PAGER },
+                { "set-log-level",  EQUAL, 2, set_log_level,          XYZCTL_BUS                },
+                { "verify",         MORE,  1, do_verify                                         },
+                {}
+        };
+        _cleanup_bus_close_unref_ sd_bus *bus = NULL;
         int r;
 
         setlocale(LC_ALL, "");
@@ -1351,40 +1342,11 @@ int main(int argc, char *argv[]) {
         if (r <= 0)
                 goto finish;
 
-        if (streq_ptr(argv[optind], "verify"))
-                r = verify_units(argv+optind+1,
-                                 arg_transport.user ? SYSTEMD_USER : SYSTEMD_SYSTEM,
-                                 arg_man);
-        else {
-                _cleanup_bus_close_unref_ sd_bus *bus = NULL;
+        r = bus_open_transport(&arg_transport, &bus);
 
-                r = bus_open_transport(&arg_transport, &bus);
-                if (r < 0) {
-                        log_error("Failed to create bus connection: %s", strerror(-r));
-                        goto finish;
-                }
-
-                if (!argv[optind] || streq(argv[optind], "time"))
-                        r = analyze_time(bus);
-                else if (streq(argv[optind], "blame"))
-                        r = analyze_blame(bus);
-                else if (streq(argv[optind], "critical-chain"))
-                        r = analyze_critical_chain(bus, argv+optind+1);
-                else if (streq(argv[optind], "plot"))
-                        r = analyze_plot(bus);
-                else if (streq(argv[optind], "dot"))
-                        r = dot(bus, argv+optind+1);
-                else if (streq(argv[optind], "dump"))
-                        r = dump(bus, argv+optind+1);
-                else if (streq(argv[optind], "set-log-level"))
-                        r = set_log_level(bus, argv+optind+1);
-                else
-                        log_error("Unknown operation '%s'.", argv[optind]);
-        }
+        r = xyzctl_main(verbs, bus, r, argv + optind, &help, false, !arg_no_pager);
 
 finish:
-        pager_close();
-
         strv_free(arg_dot_from_patterns);
         strv_free(arg_dot_to_patterns);
 

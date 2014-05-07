@@ -887,7 +887,9 @@ libsystemd_shared_la_SOURCES = \
 	src/shared/uid-range.h \
 	src/shared/switch-root.h \
 	src/shared/switch-root.c \
-	src/shared/nss-util.h
+	src/shared/nss-util.h \
+	src/shared/xyzctl.h \
+	src/shared/xyzctl.c
 
 if HAVE_UTMP
 libsystemd_shared_la_SOURCES += \

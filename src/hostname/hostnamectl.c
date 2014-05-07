@@ -33,7 +33,6 @@
 #include "bus-util.h"
 #include "bus-error.h"
 #include "util.h"
-#include "spawn-polkit-agent.h"
 #include "build.h"
 #include "clock-util.h"
 #include "strv.h"
@@ -41,24 +40,13 @@
 #include "virt.h"
 #include "architecture.h"
 #include "fileio.h"
+#include "xyzctl.h"
 
 static bool arg_ask_password = true;
 static BusTransport arg_transport = {BUS_TRANSPORT_LOCAL};
 static bool arg_transient = false;
 static bool arg_pretty = false;
 static bool arg_static = false;
-
-static void polkit_agent_open_if_enabled(void) {
-
-        /* Open the polkit agent as a child process if necessary */
-        if (!arg_ask_password)
-                return;
-
-        if (arg_transport.type != BUS_TRANSPORT_LOCAL)
-                return;
-
-        polkit_agent_open();
-}
 
 typedef struct StatusInfo {
         char *hostname;
@@ -240,8 +228,6 @@ static int show_status(sd_bus *bus, char **args, unsigned n) {
 static int set_simple_string(sd_bus *bus, const char *method, const char *value) {
         _cleanup_bus_error_free_ sd_bus_error error = SD_BUS_ERROR_NULL;
         int r = 0;
-
-        polkit_agent_open_if_enabled();
 
         r = sd_bus_call_method(
                         bus,
@@ -434,87 +420,16 @@ static int parse_argv(int argc, char *argv[]) {
         return 1;
 }
 
-static int hostnamectl_main(sd_bus *bus, int argc, char *argv[]) {
-
-        static const struct {
-                const char* verb;
-                const enum {
-                        MORE,
-                        LESS,
-                        EQUAL
-                } argc_cmp;
-                const int argc;
-                int (* const dispatch)(sd_bus *bus, char **args, unsigned n);
-        } verbs[] = {
-                { "status",           LESS,  1, show_status    },
-                { "set-hostname",     EQUAL, 2, set_hostname   },
-                { "set-icon-name",    EQUAL, 2, set_icon_name  },
-                { "set-chassis",      EQUAL, 2, set_chassis    },
-                { "set-deployment",   EQUAL, 2, set_deployment },
-                { "set-location",     EQUAL, 2, set_location   },
-        };
-
-        int left;
-        unsigned i;
-
-        assert(argc >= 0);
-        assert(argv);
-
-        left = argc - optind;
-
-        if (left <= 0)
-                /* Special rule: no arguments means "status" */
-                i = 0;
-        else {
-                if (streq(argv[optind], "help")) {
-                        help();
-                        return 0;
-                }
-
-                for (i = 0; i < ELEMENTSOF(verbs); i++)
-                        if (streq(argv[optind], verbs[i].verb))
-                                break;
-
-                if (i >= ELEMENTSOF(verbs)) {
-                        log_error("Unknown operation %s", argv[optind]);
-                        return -EINVAL;
-                }
-        }
-
-        switch (verbs[i].argc_cmp) {
-
-        case EQUAL:
-                if (left != verbs[i].argc) {
-                        log_error("Invalid number of arguments.");
-                        return -EINVAL;
-                }
-
-                break;
-
-        case MORE:
-                if (left < verbs[i].argc) {
-                        log_error("Too few arguments.");
-                        return -EINVAL;
-                }
-
-                break;
-
-        case LESS:
-                if (left > verbs[i].argc) {
-                        log_error("Too many arguments.");
-                        return -EINVAL;
-                }
-
-                break;
-
-        default:
-                assert_not_reached("Unknown comparison operator.");
-        }
-
-        return verbs[i].dispatch(bus, argv + optind, left);
-}
-
 int main(int argc, char *argv[]) {
+        static const xyzctl_verb verbs[] = {
+                { "status",         LESS,  1, show_status,    XYZCTL_BUS                 },
+                { "set-hostname",   EQUAL, 2, set_hostname,   XYZCTL_BUS | XYZCTL_POLKIT },
+                { "set-icon-name",  EQUAL, 2, set_icon_name,  XYZCTL_BUS | XYZCTL_POLKIT },
+                { "set-chassis",    EQUAL, 2, set_chassis,    XYZCTL_BUS | XYZCTL_POLKIT },
+                { "set-deployment", EQUAL, 2, set_deployment, XYZCTL_BUS | XYZCTL_POLKIT },
+                { "set-location",   EQUAL, 2, set_location,   XYZCTL_BUS | XYZCTL_POLKIT },
+                {}
+        };
         _cleanup_bus_close_unref_ sd_bus *bus = NULL;
         int r;
 
@@ -526,13 +441,11 @@ int main(int argc, char *argv[]) {
         if (r <= 0)
                 goto finish;
 
-        r = bus_open_transport(&arg_transport, &bus);
-        if (r < 0) {
-                log_error("Failed to create bus connection: %s", strerror(-r));
-                goto finish;
-        }
+        if (arg_transport.type != BUS_TRANSPORT_LOCAL)
+                arg_ask_password = false;
 
-        r = hostnamectl_main(bus, argc, argv);
+        r = bus_open_transport(&arg_transport, &bus);
+        r = xyzctl_main(verbs, bus, r, argv + optind, &help, arg_ask_password, false);
 
 finish:
         return r < 0 ? EXIT_FAILURE : r;

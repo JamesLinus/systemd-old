@@ -35,7 +35,6 @@
 #include "bus-error.h"
 #include "bus-message.h"
 #include "util.h"
-#include "spawn-polkit-agent.h"
 #include "build.h"
 #include "strv.h"
 #include "pager.h"
@@ -46,31 +45,12 @@
 #include "virt.h"
 #include "fileio.h"
 #include "locale-util.h"
+#include "xyzctl.h"
 
 static bool arg_no_pager = false;
 static bool arg_ask_password = true;
 static BusTransport arg_transport = {BUS_TRANSPORT_LOCAL};
 static bool arg_convert = true;
-
-static void pager_open_if_enabled(void) {
-
-        if (arg_no_pager)
-                return;
-
-        pager_open(false);
-}
-
-static void polkit_agent_open_if_enabled(void) {
-
-        /* Open the polkit agent as a child process if necessary */
-        if (!arg_ask_password)
-                return;
-
-        if (arg_transport.type != BUS_TRANSPORT_LOCAL)
-                return;
-
-        polkit_agent_open();
-}
 
 typedef struct StatusInfo {
         char **locale;
@@ -197,8 +177,6 @@ static int set_locale(sd_bus *bus, char **args, unsigned n) {
         assert(bus);
         assert(args);
 
-        polkit_agent_open_if_enabled();
-
         r = sd_bus_message_new_method_call(
                         bus,
                         &m,
@@ -238,7 +216,6 @@ static int list_locales(sd_bus *bus, char **args, unsigned n) {
                 return r;
         }
 
-        pager_open_if_enabled();
         strv_print(l);
 
         return 0;
@@ -256,8 +233,6 @@ static int set_vconsole_keymap(sd_bus *bus, char **args, unsigned n) {
                 log_error("Too many arguments.");
                 return -EINVAL;
         }
-
-        polkit_agent_open_if_enabled();
 
         map = args[1];
         toggle_map = n > 2 ? args[2] : "";
@@ -342,8 +317,6 @@ static int list_vconsole_keymaps(sd_bus *bus, char **args, unsigned n) {
 
         strv_sort(l);
 
-        pager_open_if_enabled();
-
         strv_print(l);
 
         return 0;
@@ -361,8 +334,6 @@ static int set_x11_keymap(sd_bus *bus, char **args, unsigned n) {
                 log_error("Too many arguments.");
                 return -EINVAL;
         }
-
-        polkit_agent_open_if_enabled();
 
         layout = args[1];
         model = n > 2 ? args[2] : "";
@@ -482,8 +453,6 @@ static int list_x11_keymaps(sd_bus *bus, char **args, unsigned n) {
         strv_sort(list);
         strv_uniq(list);
 
-        pager_open_if_enabled();
-
         strv_print(list);
         return 0;
 }
@@ -584,91 +553,19 @@ static int parse_argv(int argc, char *argv[]) {
         return 1;
 }
 
-static int localectl_main(sd_bus *bus, int argc, char *argv[]) {
-
-        static const struct {
-                const char* verb;
-                const enum {
-                        MORE,
-                        LESS,
-                        EQUAL
-                } argc_cmp;
-                const int argc;
-                int (* const dispatch)(sd_bus *bus, char **args, unsigned n);
-        } verbs[] = {
-                { "status",                   LESS,   1, show_status           },
-                { "set-locale",               MORE,   2, set_locale            },
-                { "list-locales",             EQUAL,  1, list_locales          },
-                { "set-keymap",               MORE,   2, set_vconsole_keymap   },
-                { "list-keymaps",             EQUAL,  1, list_vconsole_keymaps },
-                { "set-x11-keymap",           MORE,   2, set_x11_keymap        },
-                { "list-x11-keymap-models",   EQUAL,  1, list_x11_keymaps      },
-                { "list-x11-keymap-layouts",  EQUAL,  1, list_x11_keymaps      },
-                { "list-x11-keymap-variants", LESS,   2, list_x11_keymaps      },
-                { "list-x11-keymap-options",  EQUAL,  1, list_x11_keymaps      },
-        };
-
-        int left;
-        unsigned i;
-
-        assert(argc >= 0);
-        assert(argv);
-
-        left = argc - optind;
-
-        if (left <= 0)
-                /* Special rule: no arguments means "status" */
-                i = 0;
-        else {
-                if (streq(argv[optind], "help")) {
-                        help();
-                        return 0;
-                }
-
-                for (i = 0; i < ELEMENTSOF(verbs); i++)
-                        if (streq(argv[optind], verbs[i].verb))
-                                break;
-
-                if (i >= ELEMENTSOF(verbs)) {
-                        log_error("Unknown operation %s", argv[optind]);
-                        return -EINVAL;
-                }
-        }
-
-        switch (verbs[i].argc_cmp) {
-
-        case EQUAL:
-                if (left != verbs[i].argc) {
-                        log_error("Invalid number of arguments.");
-                        return -EINVAL;
-                }
-
-                break;
-
-        case MORE:
-                if (left < verbs[i].argc) {
-                        log_error("Too few arguments.");
-                        return -EINVAL;
-                }
-
-                break;
-
-        case LESS:
-                if (left > verbs[i].argc) {
-                        log_error("Too many arguments.");
-                        return -EINVAL;
-                }
-
-                break;
-
-        default:
-                assert_not_reached("Unknown comparison operator.");
-        }
-
-        return verbs[i].dispatch(bus, argv + optind, left);
-}
-
 int main(int argc, char*argv[]) {
+        static const xyzctl_verb verbs[] = {
+                { "status",                   LESS,  1, show_status,           XYZCTL_BUS                 },
+                { "set-locale",               MORE,  2, set_locale,            XYZCTL_BUS | XYZCTL_POLKIT },
+                { "list-locales",             EQUAL, 1, list_locales,          XYZCTL_BUS | XYZCTL_PAGER  },
+                { "set-keymap",               MORE,  2, set_vconsole_keymap,   XYZCTL_BUS | XYZCTL_POLKIT },
+                { "list-keymaps",             EQUAL, 1, list_vconsole_keymaps, XYZCTL_BUS | XYZCTL_PAGER  },
+                { "set-x11-keymap",           MORE,  2, set_x11_keymap,        XYZCTL_BUS | XYZCTL_POLKIT },
+                { "list-x11-keymap-models",   EQUAL, 1, list_x11_keymaps,      XYZCTL_BUS | XYZCTL_PAGER  },
+                { "list-x11-keymap-layouts",  EQUAL, 1, list_x11_keymaps,      XYZCTL_BUS | XYZCTL_PAGER  },
+                { "list-x11-keymap-variants", LESS,  2, list_x11_keymaps,      XYZCTL_BUS | XYZCTL_PAGER  },
+                { "list-x11-keymap-options",  EQUAL, 1, list_x11_keymaps,      XYZCTL_BUS | XYZCTL_PAGER  },
+        };
         _cleanup_bus_close_unref_ sd_bus *bus = NULL;
         int r;
 
@@ -680,16 +577,12 @@ int main(int argc, char*argv[]) {
         if (r <= 0)
                 goto finish;
 
-        r = bus_open_transport(&arg_transport, &bus);
-        if (r < 0) {
-                log_error("Failed to create bus connection: %s", strerror(-r));
-                goto finish;
-        }
+        if (arg_transport.type != BUS_TRANSPORT_LOCAL)
+                arg_ask_password = false;
 
-        r = localectl_main(bus, argc, argv);
+        r = bus_open_transport(&arg_transport, &bus);
+        r = xyzctl_main(verbs, bus, r, argv + optind, &help, arg_ask_password, !arg_no_pager);
 
 finish:
-        pager_close();
-
         return r < 0 ? EXIT_FAILURE : EXIT_SUCCESS;
 }

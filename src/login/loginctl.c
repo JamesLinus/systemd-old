@@ -32,14 +32,13 @@
 #include "log.h"
 #include "util.h"
 #include "macro.h"
-#include "pager.h"
 #include "build.h"
 #include "strv.h"
 #include "unit-name.h"
 #include "sysfs-show.h"
 #include "cgroup-show.h"
 #include "cgroup-util.h"
-#include "spawn-polkit-agent.h"
+#include "xyzctl.h"
 
 static char **arg_property = NULL;
 static bool arg_all = false;
@@ -51,27 +50,6 @@ static int arg_signal = SIGTERM;
 static BusTransport arg_transport = {BUS_TRANSPORT_LOCAL};
 static bool arg_ask_password = true;
 
-static void pager_open_if_enabled(void) {
-
-        if (arg_no_pager)
-                return;
-
-        pager_open(false);
-}
-
-static void polkit_agent_open_if_enabled(void) {
-
-        /* Open the polkit agent as a child process if necessary */
-
-        if (!arg_ask_password)
-                return;
-
-        if (arg_transport.type != BUS_TRANSPORT_LOCAL)
-                return;
-
-        polkit_agent_open();
-}
-
 static int list_sessions(sd_bus *bus, char **args, unsigned n) {
         _cleanup_bus_error_free_ sd_bus_error error = SD_BUS_ERROR_NULL;
         _cleanup_bus_message_unref_ sd_bus_message *reply = NULL;
@@ -79,8 +57,6 @@ static int list_sessions(sd_bus *bus, char **args, unsigned n) {
         unsigned k = 0;
         uint32_t uid;
         int r;
-
-        pager_open_if_enabled();
 
         r = sd_bus_call_method(
                         bus,
@@ -123,8 +99,6 @@ static int list_users(sd_bus *bus, char **args, unsigned n) {
         uint32_t uid;
         int r;
 
-        pager_open_if_enabled();
-
         r = sd_bus_call_method(
                         bus,
                         "org.freedesktop.login1",
@@ -164,8 +138,6 @@ static int list_seats(sd_bus *bus, char **args, unsigned n) {
         const char *seat, *object;
         unsigned k = 0;
         int r;
-
-        pager_open_if_enabled();
 
         r = sd_bus_call_method(
                         bus,
@@ -631,8 +603,6 @@ static int show_session(sd_bus *bus, char **args, unsigned n) {
 
         properties = !strstr(args[0], "status");
 
-        pager_open_if_enabled();
-
         if (properties && n <= 1) {
                 /* If not argument is specified inspect the manager
                  * itself */
@@ -682,8 +652,6 @@ static int show_user(sd_bus *bus, char **args, unsigned n) {
         assert(args);
 
         properties = !strstr(args[0], "status");
-
-        pager_open_if_enabled();
 
         if (properties && n <= 1) {
                 /* If not argument is specified inspect the manager
@@ -741,8 +709,6 @@ static int show_seat(sd_bus *bus, char **args, unsigned n) {
         assert(args);
 
         properties = !strstr(args[0], "status");
-
-        pager_open_if_enabled();
 
         if (properties && n <= 1) {
                 /* If not argument is specified inspect the manager
@@ -850,8 +816,6 @@ static int enable_linger(sd_bus *bus, char **args, unsigned n) {
 
         assert(args);
 
-        polkit_agent_open_if_enabled();
-
         b = streq(args[0], "enable-linger");
 
         for (i = 1; i < n; i++) {
@@ -956,8 +920,6 @@ static int attach(sd_bus *bus, char **args, unsigned n) {
 
         assert(args);
 
-        polkit_agent_open_if_enabled();
-
         for (i = 2; i < n; i++) {
 
                 r = sd_bus_call_method (
@@ -983,8 +945,6 @@ static int flush_devices(sd_bus *bus, char **args, unsigned n) {
         int r;
 
         assert(args);
-
-        polkit_agent_open_if_enabled();
 
         r = sd_bus_call_method (
                         bus,
@@ -1196,104 +1156,33 @@ static int parse_argv(int argc, char *argv[]) {
         return 1;
 }
 
-static int loginctl_main(sd_bus *bus, int argc, char *argv[]) {
-
-        static const struct {
-                const char* verb;
-                const enum {
-                        MORE,
-                        LESS,
-                        EQUAL
-                } argc_cmp;
-                const int argc;
-                int (* const dispatch)(sd_bus *bus, char **args, unsigned n);
-        } verbs[] = {
-                { "list-sessions",         LESS,   1, list_sessions     },
-                { "session-status",        MORE,   2, show_session      },
-                { "show-session",          MORE,   1, show_session      },
-                { "activate",              EQUAL,  2, activate          },
-                { "lock-session",          MORE,   2, activate          },
-                { "unlock-session",        MORE,   2, activate          },
-                { "lock-sessions",         EQUAL,  1, lock_sessions     },
-                { "unlock-sessions",       EQUAL,  1, lock_sessions     },
-                { "terminate-session",     MORE,   2, activate          },
-                { "kill-session",          MORE,   2, kill_session      },
-                { "list-users",            EQUAL,  1, list_users        },
-                { "user-status",           MORE,   2, show_user         },
-                { "show-user",             MORE,   1, show_user         },
-                { "enable-linger",         MORE,   2, enable_linger     },
-                { "disable-linger",        MORE,   2, enable_linger     },
-                { "terminate-user",        MORE,   2, terminate_user    },
-                { "kill-user",             MORE,   2, kill_user         },
-                { "list-seats",            EQUAL,  1, list_seats        },
-                { "seat-status",           MORE,   2, show_seat         },
-                { "show-seat",             MORE,   1, show_seat         },
-                { "attach",                MORE,   3, attach            },
-                { "flush-devices",         EQUAL,  1, flush_devices     },
-                { "terminate-seat",        MORE,   2, terminate_seat    },
-        };
-
-        int left;
-        unsigned i;
-
-        assert(argc >= 0);
-        assert(argv);
-
-        left = argc - optind;
-
-        if (left <= 0)
-                /* Special rule: no arguments means "list-sessions" */
-                i = 0;
-        else {
-                if (streq(argv[optind], "help")) {
-                        help();
-                        return 0;
-                }
-
-                for (i = 0; i < ELEMENTSOF(verbs); i++)
-                        if (streq(argv[optind], verbs[i].verb))
-                                break;
-
-                if (i >= ELEMENTSOF(verbs)) {
-                        log_error("Unknown operation %s", argv[optind]);
-                        return -EINVAL;
-                }
-        }
-
-        switch (verbs[i].argc_cmp) {
-
-        case EQUAL:
-                if (left != verbs[i].argc) {
-                        log_error("Invalid number of arguments.");
-                        return -EINVAL;
-                }
-
-                break;
-
-        case MORE:
-                if (left < verbs[i].argc) {
-                        log_error("Too few arguments.");
-                        return -EINVAL;
-                }
-
-                break;
-
-        case LESS:
-                if (left > verbs[i].argc) {
-                        log_error("Too many arguments.");
-                        return -EINVAL;
-                }
-
-                break;
-
-        default:
-                assert_not_reached("Unknown comparison operator.");
-        }
-
-        return verbs[i].dispatch(bus, argv + optind, left);
-}
-
 int main(int argc, char *argv[]) {
+        static const xyzctl_verb verbs[] = {
+                { "list-sessions",     LESS,  1, list_sessions,  XYZCTL_BUS | XYZCTL_PAGER  },
+                { "session-status",    MORE,  2, show_session,   XYZCTL_BUS | XYZCTL_PAGER  },
+                { "show-session",      MORE,  1, show_session,   XYZCTL_BUS | XYZCTL_PAGER  },
+                { "activate",          EQUAL, 2, activate,       XYZCTL_BUS                 },
+                { "lock-session",      MORE,  2, activate,       XYZCTL_BUS                 },
+                { "unlock-session",    MORE,  2, activate,       XYZCTL_BUS                 },
+                { "lock-sessions",     EQUAL, 1, lock_sessions,  XYZCTL_BUS                 },
+                { "unlock-sessions",   EQUAL, 1, lock_sessions,  XYZCTL_BUS                 },
+                { "terminate-session", MORE,  2, activate,       XYZCTL_BUS                 },
+                { "kill-session",      MORE,  2, kill_session,   XYZCTL_BUS                 },
+                { "list-users",        EQUAL, 1, list_users,     XYZCTL_BUS | XYZCTL_PAGER  },
+                { "user-status",       MORE,  2, show_user,      XYZCTL_BUS | XYZCTL_PAGER  },
+                { "show-user",         MORE,  1, show_user,      XYZCTL_BUS | XYZCTL_PAGER  },
+                { "enable-linger",     MORE,  2, enable_linger,  XYZCTL_BUS | XYZCTL_POLKIT },
+                { "disable-linger",    MORE,  2, enable_linger,  XYZCTL_BUS | XYZCTL_POLKIT },
+                { "terminate-user",    MORE,  2, terminate_user, XYZCTL_BUS                 },
+                { "kill-user",         MORE,  2, kill_user,      XYZCTL_BUS                 },
+                { "list-seats",        EQUAL, 1, list_seats,     XYZCTL_BUS | XYZCTL_PAGER  },
+                { "seat-status",       MORE,  2, show_seat,      XYZCTL_BUS | XYZCTL_PAGER  },
+                { "show-seat",         MORE,  1, show_seat,      XYZCTL_BUS | XYZCTL_PAGER  },
+                { "attach",            MORE,  3, attach,         XYZCTL_BUS | XYZCTL_POLKIT },
+                { "flush-devices",     EQUAL, 1, flush_devices,  XYZCTL_BUS | XYZCTL_POLKIT },
+                { "terminate-seat",    MORE,  2, terminate_seat, XYZCTL_BUS                 },
+                {}
+        };
         _cleanup_bus_close_unref_ sd_bus *bus = NULL;
         int r;
 
@@ -1306,16 +1195,9 @@ int main(int argc, char *argv[]) {
                 goto finish;
 
         r = bus_open_transport(&arg_transport, &bus);
-        if (r < 0) {
-                log_error("Failed to create bus connection: %s", strerror(-r));
-                goto finish;
-        }
-
-        r = loginctl_main(bus, argc, argv);
+        r = xyzctl_main(verbs, bus, r, argv + optind, &help, arg_ask_password, !arg_no_pager);
 
 finish:
-        pager_close();
-
         strv_free(arg_property);
 
         return r < 0 ? EXIT_FAILURE : EXIT_SUCCESS;
