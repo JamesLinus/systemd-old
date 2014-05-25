@@ -868,110 +868,18 @@ static void help(void) {
                program_invocation_short_name);
 }
 
-static int parse_argv(int argc, char *argv[]) {
-        enum {
-                ARG_VERSION = 0x100,
-                ARG_KEY,
-                ARG_CERT,
-                ARG_TRUST,
-        };
-
-        int r, c;
-
-        static const struct option options[] = {
-                { "help",    no_argument,       NULL, 'h'         },
-                { "version", no_argument,       NULL, ARG_VERSION },
-                { "key",     required_argument, NULL, ARG_KEY     },
-                { "cert",    required_argument, NULL, ARG_CERT    },
-                { "trust",   required_argument, NULL, ARG_TRUST   },
+int main(int argc, char *argv[]) {
+        static const struct sd_option options[] = {
+                OPTIONS_BASIC(help),
+                { "key",   0, true, option_read_full_file, &key_pem   },
+                { "cert",  0, true, option_read_full_file, &cert_pem  },
+#ifdef HAVE_GNUTLS
+                { "trust", 0, true, option_read_full_file, &trust_pem },
+#else
+                { "trust", 0, true, option_not_supported              },
+#endif
                 {}
         };
-
-        assert(argc >= 0);
-        assert(argv);
-
-        while ((c = getopt_long(argc, argv, "h", options, NULL)) >= 0)
-
-                switch(c) {
-
-                case 'h':
-                        help();
-                        return 0;
-
-                case ARG_VERSION:
-                        puts(PACKAGE_STRING);
-                        puts(SYSTEMD_FEATURES);
-                        return 0;
-
-                case ARG_KEY:
-                        if (key_pem) {
-                                log_error("Key file specified twice");
-                                return -EINVAL;
-                        }
-                        r = read_full_file(optarg, &key_pem, NULL);
-                        if (r < 0) {
-                                log_error("Failed to read key file: %s", strerror(-r));
-                                return r;
-                        }
-                        assert(key_pem);
-                        break;
-
-                case ARG_CERT:
-                        if (cert_pem) {
-                                log_error("Certificate file specified twice");
-                                return -EINVAL;
-                        }
-                        r = read_full_file(optarg, &cert_pem, NULL);
-                        if (r < 0) {
-                                log_error("Failed to read certificate file: %s", strerror(-r));
-                                return r;
-                        }
-                        assert(cert_pem);
-                        break;
-
-                case ARG_TRUST:
-#ifdef HAVE_GNUTLS
-                        if (trust_pem) {
-                                log_error("CA certificate file specified twice");
-                                return -EINVAL;
-                        }
-                        r = read_full_file(optarg, &trust_pem, NULL);
-                        if (r < 0) {
-                                log_error("Failed to read CA certificate file: %s", strerror(-r));
-                                return r;
-                        }
-                        assert(trust_pem);
-                        break;
-#else
-                        log_error("Option --trust is not available.");
-#endif
-
-                case '?':
-                        return -EINVAL;
-
-                default:
-                        assert_not_reached("Unhandled option");
-                }
-
-        if (optind < argc) {
-                log_error("This program does not take arguments.");
-                return -EINVAL;
-        }
-
-        if (!!key_pem != !!cert_pem) {
-                log_error("Certificate and key files must be specified together");
-                return -EINVAL;
-        }
-
-        if (trust_pem && !key_pem) {
-                log_error("CA certificate can only be used with certificate file");
-                return -EINVAL;
-        }
-
-        return 1;
-}
-
-int main(int argc, char *argv[]) {
         struct MHD_Daemon *d = NULL;
         int r, n;
 
@@ -979,11 +887,21 @@ int main(int argc, char *argv[]) {
         log_parse_environment();
         log_open();
 
-        r = parse_argv(argc, argv);
+        r = option_parse_argv(options, argc, argv, NULL);
         if (r < 0)
                 return EXIT_FAILURE;
         if (r == 0)
                 return EXIT_SUCCESS;
+
+        if (!!key_pem != !!cert_pem) {
+                log_error("Certificate and key files must be specified together");
+                return EXIT_FAILURE;
+        }
+
+        if (trust_pem && !key_pem) {
+                log_error("CA certificate can only be used with certificate file");
+                return EXIT_FAILURE;
+        }
 
 #ifdef HAVE_GNUTLS
         gnutls_global_set_log_function(log_func_gnutls);

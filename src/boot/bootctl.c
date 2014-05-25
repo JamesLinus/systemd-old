@@ -22,13 +22,12 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <unistd.h>
-#include <getopt.h>
 #include <locale.h>
 #include <string.h>
 #include <sys/timex.h>
 
 #include "boot.h"
-#include "build.h"
+#include "option.h"
 #include "util.h"
 #include "utf8.h"
 #include "xyzctl.h"
@@ -41,45 +40,6 @@ static void help(void) {
                "Commands:\n"
                "  status                 Show current boot settings\n"
                , program_invocation_short_name);
-}
-
-static int parse_argv(int argc, char *argv[]) {
-        enum {
-                ARG_VERSION = 0x100,
-        };
-
-        static const struct option options[] = {
-                { "help",        no_argument, NULL, 'h'          },
-                { "version",     no_argument, NULL, ARG_VERSION  },
-                {}
-        };
-
-        int c;
-
-        assert(argc >= 0);
-        assert(argv);
-
-        while ((c = getopt_long(argc, argv, "h", options, NULL)) >= 0)
-
-                switch (c) {
-
-                case 'h':
-                        help();
-                        return 0;
-
-                case ARG_VERSION:
-                        puts(PACKAGE_STRING);
-                        puts(SYSTEMD_FEATURES);
-                        return 0;
-
-                case '?':
-                        return -EINVAL;
-
-                default:
-                        assert_not_reached("Unhandled option");
-                }
-
-        return 1;
 }
 
 static int boot_info_new(struct boot_info **info) {
@@ -195,20 +155,24 @@ static int show_status(sd_bus *_unused, char **args, unsigned n) {
 }
 
 int main(int argc, char *argv[]) {
+        static const struct sd_option options[] = {
+                OPTIONS_BASIC(help), {}
+        };
         static const xyzctl_verb verbs[] = {
                 { "status", LESS, 1, show_status },
                 {}
         };
         int r;
+        char **args;
 
         log_parse_environment();
         log_open();
 
-        r = parse_argv(argc, argv);
+        r = option_parse_argv(options, argc, argv, &args);
         if (r <= 0)
                 goto finish;
 
-        r = xyzctl_main(verbs, NULL, 0, argv + optind, &help, false, false);
+        r = xyzctl_main(verbs, NULL, 0, args, &help, false, false);
 
 finish:
         return r < 0 ? EXIT_FAILURE : EXIT_SUCCESS;

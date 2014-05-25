@@ -23,11 +23,10 @@
 #include <stdbool.h>
 #include <errno.h>
 #include <string.h>
-#include <getopt.h>
 
 #include "util.h"
 #include "virt.h"
-#include "build.h"
+#include "option.h"
 
 static bool arg_quiet = false;
 static enum {
@@ -47,68 +46,14 @@ static void help(void) {
                , program_invocation_short_name);
 }
 
-static int parse_argv(int argc, char *argv[]) {
-
-        enum {
-                ARG_VERSION = 0x100
-        };
-
-        static const struct option options[] = {
-                { "help",      no_argument,       NULL, 'h'           },
-                { "version",   no_argument,       NULL, ARG_VERSION   },
-                { "container", no_argument,       NULL, 'c'           },
-                { "vm",        optional_argument, NULL, 'v'           },
-                { "quiet",     no_argument,       NULL, 'q'           },
+int main(int argc, char *argv[]) {
+        static const struct sd_option options[] = {
+                OPTIONS_BASIC(help),
+                { "container", 'c', false, option_set_int,  &arg_mode,  ONLY_CONTAINER },
+                { "vm",        'v', false, option_set_int,  &arg_mode,  ONLY_VM        },
+                { "quiet",     'q', false, option_set_bool, &arg_quiet, true           },
                 {}
         };
-
-        int c;
-
-        assert(argc >= 0);
-        assert(argv);
-
-        while ((c = getopt_long(argc, argv, "hqcv", options, NULL)) >= 0)
-
-                switch (c) {
-
-                case 'h':
-                        help();
-                        return 0;
-
-                case ARG_VERSION:
-                        puts(PACKAGE_STRING);
-                        puts(SYSTEMD_FEATURES);
-                        return 0;
-
-                case 'q':
-                        arg_quiet = true;
-                        break;
-
-                case 'c':
-                        arg_mode = ONLY_CONTAINER;
-                        break;
-
-                case 'v':
-                        arg_mode = ONLY_VM;
-                        break;
-
-                case '?':
-                        return -EINVAL;
-
-                default:
-                        assert_not_reached("Unhandled option");
-                }
-
-        if (optind < argc) {
-                log_error("%s takes no arguments.",
-                          program_invocation_short_name);
-                return -EINVAL;
-        }
-
-        return 1;
-}
-
-int main(int argc, char *argv[]) {
         const char *id = NULL;
         int retval = EXIT_SUCCESS;
         int r;
@@ -120,7 +65,7 @@ int main(int argc, char *argv[]) {
         log_parse_environment();
         log_open();
 
-        r = parse_argv(argc, argv);
+        r = option_parse_argv(options, argc, argv, NULL);
         if (r <= 0)
                 return r < 0 ? EXIT_FAILURE : EXIT_SUCCESS;
 

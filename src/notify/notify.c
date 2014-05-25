@@ -20,7 +20,6 @@
 ***/
 
 #include <stdio.h>
-#include <getopt.h>
 #include <errno.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -31,7 +30,7 @@
 #include "strv.h"
 #include "util.h"
 #include "log.h"
-#include "build.h"
+#include "option.h"
 #include "env-util.h"
 
 static bool arg_ready = false;
@@ -51,101 +50,53 @@ static void help(void) {
                program_invocation_short_name);
 }
 
-static int parse_argv(int argc, char *argv[]) {
+static int opt_parse_pid(const struct sd_option *option, char *optarg) {
+        pid_t *data = (pid_t*) option->userdata;
+        int r;
 
-        enum {
-                ARG_READY = 0x100,
-                ARG_VERSION,
-                ARG_PID,
-                ARG_STATUS,
-                ARG_BOOTED,
-        };
-
-        static const struct option options[] = {
-                { "help",      no_argument,       NULL, 'h'           },
-                { "version",   no_argument,       NULL, ARG_VERSION   },
-                { "ready",     no_argument,       NULL, ARG_READY     },
-                { "pid",       optional_argument, NULL, ARG_PID       },
-                { "status",    required_argument, NULL, ARG_STATUS    },
-                { "booted",    no_argument,       NULL, ARG_BOOTED    },
-                {}
-        };
-
-        int c;
-
-        assert(argc >= 0);
-        assert(argv);
-
-        while ((c = getopt_long(argc, argv, "h", options, NULL)) >= 0) {
-
-                switch (c) {
-
-                case 'h':
-                        help();
-                        return 0;
-
-                case ARG_VERSION:
-                        puts(PACKAGE_STRING);
-                        puts(SYSTEMD_FEATURES);
-                        return 0;
-
-                case ARG_READY:
-                        arg_ready = true;
-                        break;
-
-                case ARG_PID:
-
-                        if (optarg) {
-                                if (parse_pid(optarg, &arg_pid) < 0) {
-                                        log_error("Failed to parse PID %s.", optarg);
-                                        return -EINVAL;
-                                }
-                        } else
-                                arg_pid = getppid();
-
-                        break;
-
-                case ARG_STATUS:
-                        arg_status = optarg;
-                        break;
-
-                case ARG_BOOTED:
-                        arg_booted = true;
-                        break;
-
-                case '?':
+        if (optarg) {
+                r = parse_pid(optarg, data);
+                if (r < 0) {
+                        log_error("Failed to parse PID %s.", optarg);
                         return -EINVAL;
-
-                default:
-                        assert_not_reached("Unhandled option");
                 }
-        }
-
-        if (optind >= argc &&
-            !arg_ready &&
-            !arg_status &&
-            !arg_pid &&
-            !arg_booted) {
-                help();
-                return -EINVAL;
-        }
+        } else
+                *data = getppid();
 
         return 1;
 }
 
 int main(int argc, char* argv[]) {
+        static const struct sd_option options[] = {
+                OPTIONS_BASIC(help),
+                { "ready",     0, false, option_set_bool,     &arg_ready,     true  },
+                { "booted",    0, false, option_set_bool,     &arg_booted,    true  },
+                { "status",    0, true,  option_parse_string, &arg_status           },
+                { "pid",       0, true,  opt_parse_pid,       &arg_pid              },
+                {}
+        };
         _cleanup_free_ char *status = NULL, *cpid = NULL, *n = NULL;
         _cleanup_strv_free_ char **final_env = NULL;
         char* our_env[4];
+        char **args = NULL;
         unsigned i = 0;
         int r;
 
         log_parse_environment();
         log_open();
 
-        r = parse_argv(argc, argv);
+        r = option_parse_argv(options, argc, argv, &args);
         if (r <= 0)
                 goto finish;
+
+        if (strv_length(args) <= 0 &&
+            !arg_ready &&
+            !arg_status &&
+            !arg_pid &&
+            !arg_booted) {
+                r = -EINVAL;
+                goto finish;
+        }
 
         if (arg_booted)
                 return sd_booted() <= 0;
@@ -174,7 +125,7 @@ int main(int argc, char* argv[]) {
 
         our_env[i++] = NULL;
 
-        final_env = strv_env_merge(2, our_env, argv + optind);
+        final_env = strv_env_merge(2, our_env, args);
         if (!final_env) {
                 r = log_oom();
                 goto finish;

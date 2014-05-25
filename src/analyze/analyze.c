@@ -22,7 +22,6 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <getopt.h>
 #include <locale.h>
 #include <sys/utsname.h>
 #include <fnmatch.h>
@@ -30,9 +29,7 @@
 #include "sd-bus.h"
 #include "bus-util.h"
 #include "bus-error.h"
-#include "install.h"
 #include "log.h"
-#include "build.h"
 #include "util.h"
 #include "strxcpyx.h"
 #include "fileio.h"
@@ -42,6 +39,7 @@
 #include "hashmap.h"
 #include "analyze-verify.h"
 #include "xyzctl.h"
+#include "option.h"
 
 #define SCALE_X (0.1 / 1000.0)   /* pixels per us */
 #define SCALE_Y (20.0)
@@ -71,7 +69,7 @@ static enum dot {
 static char** arg_dot_from_patterns = NULL;
 static char** arg_dot_to_patterns = NULL;
 static usec_t arg_fuzz = 0;
-static bool arg_no_pager = false;
+static bool arg_pager = true;
 static BusTransport arg_transport = {BUS_TRANSPORT_LOCAL};
 static bool arg_man = true;
 
@@ -1198,127 +1196,19 @@ static void help(void) {
          * shell-completion/zsh/_systemd-analyze too. */
 }
 
-static int parse_argv(int argc, char *argv[]) {
-        enum {
-                ARG_VERSION = 0x100,
-                ARG_ORDER,
-                ARG_REQUIRE,
-                ARG_USER,
-                ARG_SYSTEM,
-                ARG_DOT_FROM_PATTERN,
-                ARG_DOT_TO_PATTERN,
-                ARG_FUZZ,
-                ARG_NO_PAGER,
-                ARG_MAN,
-        };
-
-        static const struct option options[] = {
-                { "help",         no_argument,       NULL, 'h'                  },
-                { "version",      no_argument,       NULL, ARG_VERSION          },
-                { "order",        no_argument,       NULL, ARG_ORDER            },
-                { "require",      no_argument,       NULL, ARG_REQUIRE          },
-                { "user",         no_argument,       NULL, ARG_USER             },
-                { "system",       no_argument,       NULL, ARG_SYSTEM           },
-                { "from-pattern", required_argument, NULL, ARG_DOT_FROM_PATTERN },
-                { "to-pattern",   required_argument, NULL, ARG_DOT_TO_PATTERN   },
-                { "fuzz",         required_argument, NULL, ARG_FUZZ             },
-                { "no-pager",     no_argument,       NULL, ARG_NO_PAGER         },
-                { "man",          optional_argument, NULL, ARG_MAN              },
-                { "host",         required_argument, NULL, 'H'                  },
-                { "machine",      required_argument, NULL, 'M'                  },
+int main(int argc, char *argv[]) {
+        static const struct sd_option options[] = {
+                OPTIONS_BASIC(help),
+                OPTIONS_TRANSPORT(arg_transport),
+                { "order",        0 , false, option_set_int,           &arg_dot,       DEP_ORDER   },
+                { "require",      0 , false, option_set_int,           &arg_dot,       DEP_REQUIRE },
+                { "from-pattern", 0 , true,  option_strv_extend,       &arg_dot_from_patterns      },
+                { "to-pattern",   0 , true,  option_strv_extend,       &arg_dot_to_patterns        },
+                { "fuzz",         0 , true,  option_parse_sec,         &arg_fuzz                   },
+                { "no-pager",     0 , false, option_set_bool,          &arg_pager,     false       },
+                { "man",          0 , true,  option_parse_bool,        &arg_man,                   },
                 {}
         };
-
-        int r, c;
-
-        assert(argc >= 0);
-        assert(argv);
-
-        while ((c = getopt_long(argc, argv, "hH:M:", options, NULL)) >= 0)
-                switch (c) {
-
-                case 'h':
-                        help();
-                        return 0;
-
-                case ARG_VERSION:
-                        puts(PACKAGE_STRING);
-                        puts(SYSTEMD_FEATURES);
-                        return 0;
-
-                case ARG_USER:
-                        arg_transport.user = true;
-                        break;
-
-                case ARG_SYSTEM:
-                        arg_transport.user = false;
-                        break;
-
-                case ARG_ORDER:
-                        arg_dot = DEP_ORDER;
-                        break;
-
-                case ARG_REQUIRE:
-                        arg_dot = DEP_REQUIRE;
-                        break;
-
-                case ARG_DOT_FROM_PATTERN:
-                        if (strv_extend(&arg_dot_from_patterns, optarg) < 0)
-                                return log_oom();
-
-                        break;
-
-                case ARG_DOT_TO_PATTERN:
-                        if (strv_extend(&arg_dot_to_patterns, optarg) < 0)
-                                return log_oom();
-
-                        break;
-
-                case ARG_FUZZ:
-                        r = parse_sec(optarg, &arg_fuzz);
-                        if (r < 0)
-                                return r;
-                        break;
-
-                case ARG_NO_PAGER:
-                        arg_no_pager = true;
-                        break;
-
-                case 'H':
-                        arg_transport.type = BUS_TRANSPORT_REMOTE;
-                        arg_transport.host = optarg;
-                        break;
-
-                case 'M':
-                        arg_transport.type = BUS_TRANSPORT_CONTAINER;
-                        arg_transport.host = optarg;
-                        break;
-
-                case ARG_MAN:
-                        if (optarg) {
-                                r = parse_boolean(optarg);
-                                if (r < 0) {
-                                        log_error("Failed to parse --man= argument.");
-                                        return -EINVAL;
-                                }
-
-                                arg_man = !!r;
-                        } else
-                                arg_man = true;
-
-                        break;
-
-                case '?':
-                        return -EINVAL;
-
-                default:
-                        assert_not_reached("Unhandled option code.");
-                }
-
-        return 1; /* work to do */
-}
-
-int main(int argc, char *argv[]) {
         static const xyzctl_verb verbs[] = {
                 { "time",           LESS,  1, analyze_time,           XYZCTL_BUS                },
                 { "blame",          LESS,  1, analyze_blame,          XYZCTL_BUS | XYZCTL_PAGER },
@@ -1330,6 +1220,7 @@ int main(int argc, char *argv[]) {
                 { "verify",         MORE,  1, do_verify                                         },
                 {}
         };
+        char **args = NULL;
         _cleanup_bus_close_unref_ sd_bus *bus = NULL;
         int r;
 
@@ -1338,13 +1229,12 @@ int main(int argc, char *argv[]) {
         log_parse_environment();
         log_open();
 
-        r = parse_argv(argc, argv);
+        r = option_parse_argv(options, argc, argv, &args);
         if (r <= 0)
                 goto finish;
 
         r = bus_open_transport(&arg_transport, &bus);
-
-        r = xyzctl_main(verbs, bus, r, argv + optind, &help, false, !arg_no_pager);
+        r = xyzctl_main(verbs, bus, r, args, &help, false, arg_pager);
 
 finish:
         strv_free(arg_dot_from_patterns);

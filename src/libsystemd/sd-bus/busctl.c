@@ -24,8 +24,8 @@
 #include "strv.h"
 #include "util.h"
 #include "log.h"
-#include "build.h"
-#include "pager.h"
+#include "xyzctl.h"
+#include "option.h"
 
 #include "sd-bus.h"
 #include "bus-message.h"
@@ -33,7 +33,7 @@
 #include "bus-util.h"
 #include "bus-dump.h"
 
-static bool arg_no_pager = false;
+static bool arg_pager = false;
 static bool arg_legend = true;
 static char *arg_address = NULL;
 static bool arg_unique = false;
@@ -43,16 +43,7 @@ static bool arg_show_machine = false;
 static char **arg_matches = NULL;
 static BusTransport arg_transport = {BUS_TRANSPORT_LOCAL};
 
-static void pager_open_if_enabled(void) {
-
-        /* Cache result before we open the pager */
-        if (arg_no_pager)
-                return;
-
-        pager_open(false);
-}
-
-static int list_bus_names(sd_bus *bus, char **argv) {
+static int list_bus_names(sd_bus *bus, char **argv, unsigned argc) {
         _cleanup_strv_free_ char **acquired = NULL, **activatable = NULL;
         _cleanup_free_ char **merged = NULL;
         _cleanup_hashmap_free_ Hashmap *names = NULL;
@@ -71,8 +62,6 @@ static int list_bus_names(sd_bus *bus, char **argv) {
                 log_error("Failed to list names: %s", strerror(-r));
                 return r;
         }
-
-        pager_open_if_enabled();
 
         names = hashmap_new(&string_hash_ops);
         if (!names)
@@ -221,7 +210,7 @@ static int list_bus_names(sd_bus *bus, char **argv) {
         return 0;
 }
 
-static int monitor(sd_bus *bus, char *argv[]) {
+static int monitor(sd_bus *bus, char *argv[], unsigned argc) {
         bool added_something = false;
         char **i;
         int r;
@@ -290,17 +279,12 @@ static int monitor(sd_bus *bus, char *argv[]) {
         }
 }
 
-static int status(sd_bus *bus, char *argv[]) {
+static int status(sd_bus *bus, char *argv[], unsigned argc) {
         _cleanup_bus_creds_unref_ sd_bus_creds *creds = NULL;
         pid_t pid;
         int r;
 
         assert(bus);
-
-        if (strv_length(argv) != 2) {
-                log_error("Expects one argument.");
-                return -EINVAL;
-        }
 
         r = parse_pid(argv[1], &pid);
         if (r < 0)
@@ -317,7 +301,7 @@ static int status(sd_bus *bus, char *argv[]) {
         return 0;
 }
 
-static int help(void) {
+static void help(void) {
         printf("%s [OPTIONS...] {COMMAND} ...\n\n"
                "Introspect the bus.\n\n"
                "  -h --help               Show this help\n"
@@ -340,155 +324,41 @@ static int help(void) {
                "  status NAME             Show name status\n"
                "  help                    Show this help\n"
                , program_invocation_short_name);
-
-        return 0;
-}
-
-static int parse_argv(int argc, char *argv[]) {
-
-        enum {
-                ARG_VERSION = 0x100,
-                ARG_NO_PAGER,
-                ARG_NO_LEGEND,
-                ARG_SYSTEM,
-                ARG_USER,
-                ARG_ADDRESS,
-                ARG_MATCH,
-                ARG_SHOW_MACHINE,
-                ARG_UNIQUE,
-                ARG_ACQUIRED,
-                ARG_ACTIVATABLE
-        };
-
-        static const struct option options[] = {
-                { "help",         no_argument,       NULL, 'h'              },
-                { "version",      no_argument,       NULL, ARG_VERSION      },
-                { "no-pager",     no_argument,       NULL, ARG_NO_PAGER     },
-                { "no-legend",    no_argument,       NULL, ARG_NO_LEGEND    },
-                { "system",       no_argument,       NULL, ARG_SYSTEM       },
-                { "user",         no_argument,       NULL, ARG_USER         },
-                { "address",      required_argument, NULL, ARG_ADDRESS      },
-                { "show-machine", no_argument,       NULL, ARG_SHOW_MACHINE },
-                { "unique",       no_argument,       NULL, ARG_UNIQUE       },
-                { "acquired",     no_argument,       NULL, ARG_ACQUIRED     },
-                { "activatable",  no_argument,       NULL, ARG_ACTIVATABLE  },
-                { "match",        required_argument, NULL, ARG_MATCH        },
-                { "host",         required_argument, NULL, 'H'              },
-                { "machine",      required_argument, NULL, 'M'              },
-                {},
-        };
-
-        int c;
-
-        assert(argc >= 0);
-        assert(argv);
-
-        while ((c = getopt_long(argc, argv, "hH:M:", options, NULL)) >= 0)
-
-                switch (c) {
-
-                case 'h':
-                        return help();
-
-                case ARG_VERSION:
-                        puts(PACKAGE_STRING);
-                        puts(SYSTEMD_FEATURES);
-                        return 0;
-
-                case ARG_NO_PAGER:
-                        arg_no_pager = true;
-                        break;
-
-                case ARG_NO_LEGEND:
-                        arg_legend = false;
-                        break;
-
-                case ARG_USER:
-                        arg_transport.user = true;
-                        break;
-
-                case ARG_SYSTEM:
-                        arg_transport.user = false;
-                        break;
-
-                case ARG_ADDRESS:
-                        arg_address = optarg;
-                        break;
-
-                case ARG_SHOW_MACHINE:
-                        arg_show_machine = true;
-                        break;
-
-                case ARG_UNIQUE:
-                        arg_unique = true;
-                        break;
-
-                case ARG_ACQUIRED:
-                        arg_acquired = true;
-                        break;
-
-                case ARG_ACTIVATABLE:
-                        arg_activatable = true;
-                        break;
-
-                case ARG_MATCH:
-                        if (strv_extend(&arg_matches, optarg) < 0)
-                                return log_oom();
-                        break;
-
-                case 'H':
-                        arg_transport.type = BUS_TRANSPORT_REMOTE;
-                        arg_transport.host = optarg;
-                        break;
-
-                case 'M':
-                        arg_transport.type = BUS_TRANSPORT_CONTAINER;
-                        arg_transport.host = optarg;
-                        break;
-
-                case '?':
-                        return -EINVAL;
-
-                default:
-                        assert_not_reached("Unhandled option");
-                }
-
-        if (!arg_unique && !arg_acquired && !arg_activatable)
-                arg_unique = arg_acquired = arg_activatable = true;
-
-        return 1;
-}
-
-static int busctl_main(sd_bus *bus, int argc, char *argv[]) {
-        assert(bus);
-
-        if (optind >= argc ||
-            streq(argv[optind], "list"))
-                return list_bus_names(bus, argv + optind);
-
-        if (streq(argv[optind], "monitor"))
-                return monitor(bus, argv + optind);
-
-        if (streq(argv[optind], "status"))
-                return status(bus, argv + optind);
-
-        if (streq(argv[optind], "help"))
-                return help();
-
-        log_error("Unknown command '%s'", argv[optind]);
-        return -EINVAL;
 }
 
 int main(int argc, char *argv[]) {
+        static const struct sd_option options[] = {
+                OPTIONS_BASIC(help),
+                OPTIONS_TRANSPORT(arg_transport),
+                { "no-pager",     0 , false, option_set_bool,     &arg_pager,        false },
+                { "no-legend",    0 , false, option_set_bool,     &arg_legend,       false },
+                { "address",      0 , true,  option_parse_string, &arg_address,            },
+                { "show-machine", 0 , false, option_set_bool,     &arg_show_machine, true  },
+                { "unique",       0 , false, option_set_bool,     &arg_unique,       true  },
+                { "acquired",     0 , false, option_set_bool,     &arg_acquired,     true  },
+                { "activatable",  0 , false, option_set_bool,     &arg_activatable,        },
+                { "match",        0 , true,  option_strv_extend,  &arg_matches,            },
+                {}
+        };
+        static const xyzctl_verb verbs[] = {
+                { "list",       LESS,  1, list_bus_names, XYZCTL_BUS | XYZCTL_PAGER },
+                { "monitor",    MORE,  1, monitor,        XYZCTL_BUS                },
+                { "status",     EQUAL, 2, status,         XYZCTL_BUS                },
+                {}
+        };
         _cleanup_bus_close_unref_ sd_bus *bus = NULL;
+        char **args;
         int r;
 
         log_parse_environment();
         log_open();
 
-        r = parse_argv(argc, argv);
+        r = option_parse_argv(options, argc, argv, &args);
         if (r <= 0)
                 goto finish;
+
+        if (!arg_unique && !arg_acquired && !arg_activatable)
+                arg_unique = arg_acquired = arg_activatable = true;
 
         r = sd_bus_new(&bus);
         if (r < 0) {
@@ -496,7 +366,7 @@ int main(int argc, char *argv[]) {
                 goto finish;
         }
 
-        if (streq_ptr(argv[optind], "monitor")) {
+        if (streq_ptr(args[0], "monitor")) {
 
                 r = sd_bus_set_monitor(bus, true);
                 if (r < 0) {
@@ -564,11 +434,9 @@ int main(int argc, char *argv[]) {
                 goto finish;
         }
 
-        r = busctl_main(bus, argc, argv);
+        r = xyzctl_main(verbs, bus, r, args, &help, false, arg_pager);
 
 finish:
-        pager_close();
-
         strv_free(arg_matches);
 
         return r < 0 ? EXIT_FAILURE : EXIT_SUCCESS;

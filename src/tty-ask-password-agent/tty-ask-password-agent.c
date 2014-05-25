@@ -40,8 +40,8 @@
 #include "socket-util.h"
 #include "ask-password-api.h"
 #include "strv.h"
-#include "build.h"
 #include "def.h"
+#include "option.h"
 
 static enum {
         ACTION_LIST,
@@ -537,88 +537,17 @@ static void help(void) {
                program_invocation_short_name);
 }
 
-static int parse_argv(int argc, char *argv[]) {
-
-        enum {
-                ARG_LIST = 0x100,
-                ARG_QUERY,
-                ARG_WATCH,
-                ARG_WALL,
-                ARG_PLYMOUTH,
-                ARG_CONSOLE,
-                ARG_VERSION
-        };
-
-        static const struct option options[] = {
-                { "help",     no_argument, NULL, 'h'          },
-                { "version",  no_argument, NULL, ARG_VERSION  },
-                { "list",     no_argument, NULL, ARG_LIST     },
-                { "query",    no_argument, NULL, ARG_QUERY    },
-                { "watch",    no_argument, NULL, ARG_WATCH    },
-                { "wall",     no_argument, NULL, ARG_WALL     },
-                { "plymouth", no_argument, NULL, ARG_PLYMOUTH },
-                { "console",  no_argument, NULL, ARG_CONSOLE  },
+int main(int argc, char *argv[]) {
+        static const struct sd_option options[] = {
+                OPTIONS_BASIC(help),
+                { "list",     0 , false, option_set_int,  &arg_action,   ACTION_LIST  },
+                { "query",    0 , false, option_set_int,  &arg_action,   ACTION_QUERY },
+                { "watch",    0 , false, option_set_int,  &arg_action,   ACTION_WATCH },
+                { "wall",     0 , false, option_set_int,  &arg_action,   ACTION_WALL  },
+                { "plymouth", 0 , false, option_set_bool, &arg_plymouth, true         },
+                { "console",  0 , false, option_set_bool, &arg_console,  true         },
                 {}
         };
-
-        int c;
-
-        assert(argc >= 0);
-        assert(argv);
-
-        while ((c = getopt_long(argc, argv, "h", options, NULL)) >= 0)
-
-                switch (c) {
-
-                case 'h':
-                        help();
-                        return 0;
-
-                case ARG_VERSION:
-                        puts(PACKAGE_STRING);
-                        puts(SYSTEMD_FEATURES);
-                        return 0;
-
-                case ARG_LIST:
-                        arg_action = ACTION_LIST;
-                        break;
-
-                case ARG_QUERY:
-                        arg_action = ACTION_QUERY;
-                        break;
-
-                case ARG_WATCH:
-                        arg_action = ACTION_WATCH;
-                        break;
-
-                case ARG_WALL:
-                        arg_action = ACTION_WALL;
-                        break;
-
-                case ARG_PLYMOUTH:
-                        arg_plymouth = true;
-                        break;
-
-                case ARG_CONSOLE:
-                        arg_console = true;
-                        break;
-
-                case '?':
-                        return -EINVAL;
-
-                default:
-                        assert_not_reached("Unhandled option");
-                }
-
-        if (optind != argc) {
-                log_error("%s takes no arguments.", program_invocation_short_name);
-                return -EINVAL;
-        }
-
-        return 1;
-}
-
-int main(int argc, char *argv[]) {
         int r;
 
         log_set_target(LOG_TARGET_AUTO);
@@ -627,7 +556,7 @@ int main(int argc, char *argv[]) {
 
         umask(0022);
 
-        r = parse_argv(argc, argv);
+        r = option_parse_argv(options, argc, argv, NULL);
         if (r <= 0)
                 goto finish;
 

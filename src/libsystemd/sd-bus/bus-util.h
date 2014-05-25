@@ -26,6 +26,7 @@
 #include "hashmap.h"
 #include "time-util.h"
 #include "util.h"
+#include "option.h"
 
 typedef struct BusTransport {
         enum {
@@ -81,6 +82,18 @@ void bus_verify_polkit_async_registry_free(Hashmap *registry);
 
 int bus_open_system_systemd(sd_bus **_bus);
 int bus_open_user_systemd(sd_bus **_bus);
+
+/* option parsing for BusTransport */
+int option_transport_host(const struct sd_option *option, char *optarg);
+int option_transport_user(const struct sd_option *option, char *optarg);
+int option_transport_machine(const struct sd_option *option, char *optarg);
+#define OPTIONS_TRANSPORT_NO_USER(arg_transport) \
+        { "host",    'H', true, option_transport_host,    &arg_transport }, \
+        { "machine", 'M', true, option_transport_machine, &arg_transport }
+#define OPTIONS_TRANSPORT(arg_transport) \
+        { "user",     0 , false, option_transport_user,   &arg_transport }, \
+        { "system",   0 , false, option_transport_user,   &arg_transport }, \
+        OPTIONS_TRANSPORT_NO_USER(arg_transport)
 
 int bus_open_transport(BusTransport *transport, sd_bus **bus);
 int bus_open_transport_systemd(BusTransport *transport, sd_bus **bus);

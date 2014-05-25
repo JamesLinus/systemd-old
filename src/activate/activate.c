@@ -25,12 +25,11 @@
 #include <sys/prctl.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
-#include <getopt.h>
 
 #include "systemd/sd-daemon.h"
 
 #include "socket-util.h"
-#include "build.h"
+#include "option.h"
 #include "log.h"
 #include "strv.h"
 #include "macro.h"
@@ -293,85 +292,31 @@ static void help(void) {
                , program_invocation_short_name);
 }
 
-static int parse_argv(int argc, char *argv[]) {
-        enum {
-                ARG_VERSION = 0x100,
-        };
-
-        static const struct option options[] = {
-                { "help",        no_argument,       NULL, 'h'           },
-                { "version",     no_argument,       NULL, ARG_VERSION   },
-                { "listen",      required_argument, NULL, 'l'           },
-                { "accept",      no_argument,       NULL, 'a'           },
-                { "setenv",      required_argument, NULL, 'E'           },
-                { "environment", required_argument, NULL, 'E'           }, /* alias */
+int main(int argc, char **argv, char **envp) {
+        static const struct sd_option options[] = {
+                OPTIONS_BASIC(help),
+                { "listen",      'l', true,  option_strv_extend,       &arg_listen       },
+                { "accept",      'a', false, option_set_bool,          &arg_accept, true },
+                { "setenv",      'E', true,  option_strv_extend,       &arg_setenv       },
+                { "environment", 'E', true,  option_strv_extend,       &arg_setenv       },
                 {}
         };
-
-        int c;
-
-        assert(argc >= 0);
-        assert(argv);
-
-        while ((c = getopt_long(argc, argv, "+hl:aE:", options, NULL)) >= 0)
-                switch(c) {
-                case 'h':
-                        help();
-                        return 0;
-
-                case ARG_VERSION:
-                        puts(PACKAGE_STRING);
-                        puts(SYSTEMD_FEATURES);
-                        return 0 /* done */;
-
-                case 'l': {
-                        int r = strv_extend(&arg_listen, optarg);
-                        if (r < 0)
-                                return r;
-
-                        break;
-                }
-
-                case 'a':
-                        arg_accept = true;
-                        break;
-
-                case 'E': {
-                        int r = strv_extend(&arg_setenv, optarg);
-                        if (r < 0)
-                                return r;
-
-                        break;
-                }
-
-                case '?':
-                        return -EINVAL;
-
-                default:
-                        assert_not_reached("Unhandled option");
-                }
-
-        if (optind == argc) {
-                log_error("%s: command to execute is missing.",
-                          program_invocation_short_name);
-                return -EINVAL;
-        }
-
-        arg_args = argv + optind;
-
-        return 1 /* work to do */;
-}
-
-int main(int argc, char **argv, char **envp) {
         int r, n;
         int epoll_fd = -1;
 
         log_parse_environment();
         log_open();
 
-        r = parse_argv(argc, argv);
+        r = option_parse_argv(options, argc, argv, &arg_args);
         if (r <= 0)
                 return r == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+
+        if (strv_length(arg_args) == 0) {
+                log_error("Usage: %s [OPTION...] PROGRAM [OPTION...]",
+                          program_invocation_short_name);
+                return EXIT_FAILURE;
+        }
+
 
         r = install_chld_handler();
         if (r < 0)
@@ -399,7 +344,7 @@ int main(int argc, char **argv, char **envp) {
 
                 log_info("Communication attempt on fd %i.", event.data.fd);
                 if (arg_accept) {
-                        r = do_accept(argv[optind], argv + optind, envp,
+                        r = do_accept(arg_args[0], arg_args, envp,
                                       event.data.fd);
                         if (r < 0)
                                 return EXIT_FAILURE;
@@ -407,7 +352,7 @@ int main(int argc, char **argv, char **envp) {
                         break;
         }
 
-        launch(argv[optind], argv + optind, envp, n);
+        launch(arg_args[0], arg_args, envp, n);
 
         return EXIT_SUCCESS;
 }

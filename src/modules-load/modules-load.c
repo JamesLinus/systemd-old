@@ -26,7 +26,6 @@
 #include <sys/stat.h>
 #include <limits.h>
 #include <dirent.h>
-#include <getopt.h>
 #include <libkmod.h>
 
 #include "log.h"
@@ -34,7 +33,7 @@
 #include "strv.h"
 #include "conf-files.h"
 #include "fileio.h"
-#include "build.h"
+#include "option.h"
 
 static char **arg_proc_cmdline_modules = NULL;
 
@@ -189,51 +188,15 @@ static void help(void) {
                program_invocation_short_name);
 }
 
-static int parse_argv(int argc, char *argv[]) {
-
-        enum {
-                ARG_VERSION = 0x100,
-        };
-
-        static const struct option options[] = {
-                { "help",      no_argument,       NULL, 'h'           },
-                { "version",   no_argument,       NULL, ARG_VERSION   },
-                {}
-        };
-
-        int c;
-
-        assert(argc >= 0);
-        assert(argv);
-
-        while ((c = getopt_long(argc, argv, "h", options, NULL)) >= 0)
-
-                switch (c) {
-
-                case 'h':
-                        help();
-                        return 0;
-
-                case ARG_VERSION:
-                        puts(PACKAGE_STRING);
-                        puts(SYSTEMD_FEATURES);
-                        return 0;
-
-                case '?':
-                        return -EINVAL;
-
-                default:
-                        assert_not_reached("Unhandled option");
-                }
-
-        return 1;
-}
-
 int main(int argc, char *argv[]) {
+        static const struct sd_option options[] = {
+                OPTIONS_BASIC(help), {}
+        };
+        char **args;
         int r, k;
         struct kmod_ctx *ctx;
 
-        r = parse_argv(argc, argv);
+        r = option_parse_argv(options, argc, argv, &args);
         if (r <= 0)
                 return r < 0 ? EXIT_FAILURE : EXIT_SUCCESS;
 
@@ -257,15 +220,14 @@ int main(int argc, char *argv[]) {
 
         r = 0;
 
-        if (argc > optind) {
-                int i;
+        if (strv_length(args) > 0) {
+                char **fn;
 
-                for (i = optind; i < argc; i++) {
-                        k = apply_file(ctx, argv[i], false);
+                STRV_FOREACH(fn, args) {
+                        k = apply_file(ctx, *fn, false);
                         if (k < 0 && r == 0)
                                 r = k;
                 }
-
         } else {
                 _cleanup_free_ char **files = NULL;
                 char **fn, **i;

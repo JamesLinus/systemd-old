@@ -30,7 +30,6 @@
 #include <errno.h>
 #include <sys/poll.h>
 #include <stddef.h>
-#include <getopt.h>
 
 #include "log.h"
 #include "util.h"
@@ -40,11 +39,11 @@
 #include "bus-internal.h"
 #include "bus-message.h"
 #include "bus-util.h"
-#include "build.h"
 #include "strv.h"
 #include "def.h"
 #include "capability.h"
 #include "bus-policy.h"
+#include "option.h"
 
 static char *arg_address = NULL;
 static char *arg_command_line_buffer = NULL;
@@ -65,113 +64,6 @@ static int help(void) {
                program_invocation_short_name);
 
         return 0;
-}
-
-static int parse_argv(int argc, char *argv[]) {
-
-        enum {
-                ARG_VERSION = 0x100,
-                ARG_ADDRESS,
-                ARG_DROP_PRIVILEGES,
-                ARG_CONFIGURATION,
-                ARG_MACHINE,
-        };
-
-        static const struct option options[] = {
-                { "help",            no_argument,       NULL, 'h'                 },
-                { "version",         no_argument,       NULL, ARG_VERSION         },
-                { "address",         required_argument, NULL, ARG_ADDRESS         },
-                { "drop-privileges", no_argument,       NULL, ARG_DROP_PRIVILEGES },
-                { "configuration",   required_argument, NULL, ARG_CONFIGURATION   },
-                { "machine",         required_argument, NULL, ARG_MACHINE         },
-                {},
-        };
-
-        int c, r;
-
-        assert(argc >= 0);
-        assert(argv);
-
-        while ((c = getopt_long(argc, argv, "h", options, NULL)) >= 0)
-
-                switch (c) {
-
-                case 'h':
-                        help();
-                        return 0;
-
-                case ARG_VERSION:
-                        puts(PACKAGE_STRING);
-                        puts(SYSTEMD_FEATURES);
-                        return 0;
-
-                case ARG_ADDRESS: {
-                        char *a;
-
-                        a = strdup(optarg);
-                        if (!a)
-                                return log_oom();
-
-                        free(arg_address);
-                        arg_address = a;
-                        break;
-                }
-
-                case ARG_DROP_PRIVILEGES:
-                        arg_drop_privileges = true;
-                        break;
-
-                case ARG_CONFIGURATION:
-                        r = strv_extend(&arg_configuration, optarg);
-                        if (r < 0)
-                                return log_oom();
-                        break;
-
-                case ARG_MACHINE: {
-                        _cleanup_free_ char *e = NULL;
-                        char *a;
-
-                        e = bus_address_escape(optarg);
-                        if (!e)
-                                return log_oom();
-
-#ifdef ENABLE_KDBUS
-                        a = strjoin("x-container-kernel:machine=", e, ";x-container-unix:machine=", e, NULL);
-#else
-                        a = strjoin("x-container-unix:machine=", e, NULL);
-#endif
-                        if (!a)
-                                return log_oom();
-
-                        free(arg_address);
-                        arg_address = a;
-
-                        break;
-                }
-
-                case '?':
-                        return -EINVAL;
-
-                default:
-                        assert_not_reached("Unhandled option");
-                }
-
-        /* If the first command line argument is only "x" characters
-         * we'll write who we are talking to into it, so that "ps" is
-         * explanatory */
-        arg_command_line_buffer = argv[optind];
-        if (argc > optind + 1 || (arg_command_line_buffer && !in_charset(arg_command_line_buffer, "x"))) {
-                log_error("Too many arguments");
-                return -EINVAL;
-        }
-
-        if (!arg_address) {
-                arg_address = strdup(DEFAULT_SYSTEM_BUS_PATH);
-                if (!arg_address)
-                        return log_oom();
-        }
-
-        return 1;
 }
 
 static int rename_service(sd_bus *a, sd_bus *b) {
@@ -1122,7 +1014,37 @@ static int patch_sender(sd_bus *a, sd_bus_message *m) {
         return 0;
 }
 
+static int parse_machine(const struct sd_option *option, char *optarg) {
+        _cleanup_free_ char *e = NULL;
+        char **addr = (char **)option->userdata;
+        char *a;
+
+        e = bus_address_escape(optarg);
+        if (!e)
+                return log_oom();
+
+#ifdef ENABLE_KDBUS
+        a = strjoin("x-container-kernel:machine=", e, ";x-container-unix:machine=", e, NULL);
+#else
+        a = strjoin("x-container-unix:machine=", e, NULL);
+#endif
+        if (!a)
+                return log_oom();
+
+        free(*addr);
+        *addr = a;
+        return 1;
+}
+
 int main(int argc, char *argv[]) {
+        static const struct sd_option options[] = {
+                OPTIONS_BASIC(help),
+                { "address",          0 , true,  option_strdup_string, &arg_address               },
+                { "drop-privileges",  0 , false, option_set_bool,      &arg_drop_privileges, true },
+                { "machine",          0 , true,  parse_machine,        &arg_address               },
+                { "configuration",    0 , true,  option_strv_extend,   &arg_configuration         },
+                {}
+        };
 
         _cleanup_bus_close_unref_ sd_bus *a = NULL, *b = NULL;
         sd_id128_t server_id;
@@ -1132,14 +1054,23 @@ int main(int argc, char *argv[]) {
         struct ucred ucred = {};
         _cleanup_free_ char *peersec = NULL;
         Policy policy = {};
+        char **args;
 
         log_set_target(LOG_TARGET_JOURNAL_OR_KMSG);
         log_parse_environment();
         log_open();
 
-        r = parse_argv(argc, argv);
+        r = option_parse_argv(options, argc, argv, &args);
         if (r <= 0)
                 goto finish;
+
+        if (!arg_address) {
+                arg_address = strdup(DEFAULT_SYSTEM_BUS_PATH);
+                if (!arg_address) {
+                        r = log_oom();
+                        goto finish;
+                }
+        }
 
         r = policy_load(&policy, arg_configuration);
         if (r < 0) {

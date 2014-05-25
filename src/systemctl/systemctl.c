@@ -6438,18 +6438,11 @@ static int shutdown_parse_argv(int argc, char *argv[]) {
 }
 
 static int telinit_parse_argv(int argc, char *argv[]) {
-
-        enum {
-                ARG_HELP = 0x100,
-                ARG_NO_WALL
-        };
-
-        static const struct option options[] = {
-                { "help",      no_argument,       NULL, ARG_HELP    },
-                { "no-wall",   no_argument,       NULL, ARG_NO_WALL },
+        static const struct sd_option options[] = {
+                { "help",    0, false, option_help,     &telinit_help,      },
+                { "no-wall", 0, false, option_set_bool, &arg_no_wall,   true },
                 {}
         };
-
         static const struct {
                 char from;
                 enum action to;
@@ -6469,42 +6462,26 @@ static int telinit_parse_argv(int argc, char *argv[]) {
                 { 'U', ACTION_REEXEC }
         };
 
+        int r;
+        char **args;
         unsigned i;
-        int c;
 
-        assert(argc >= 0);
-        assert(argv);
+        r = option_parse_argv(options, argc, argv, &args);
+        if (r <= 0)
+                return r;
 
-        while ((c = getopt_long(argc, argv, "", options, NULL)) >= 0)
-                switch (c) {
-
-                case ARG_HELP:
-                        telinit_help();
-                        return 0;
-
-                case ARG_NO_WALL:
-                        arg_no_wall = true;
-                        break;
-
-                case '?':
-                        return -EINVAL;
-
-                default:
-                        assert_not_reached("Unhandled option");
-                }
-
-        if (optind >= argc) {
+        if (r >= argc) {
                 log_error("%s: required argument missing.",
                           program_invocation_short_name);
                 return -EINVAL;
         }
 
-        if (optind + 1 < argc) {
+        if (r < argc) {
                 log_error("Too many arguments.");
                 return -EINVAL;
         }
 
-        if (strlen(argv[optind]) != 1) {
+        if (strlen(args[0]) != 1) {
                 log_error("Expected single character argument.");
                 return -EINVAL;
         }
@@ -6520,47 +6497,14 @@ static int telinit_parse_argv(int argc, char *argv[]) {
 
         arg_action = table[i].to;
 
-        optind ++;
-
         return 1;
 }
 
 static int runlevel_parse_argv(int argc, char *argv[]) {
-
-        enum {
-                ARG_HELP = 0x100,
+        static const struct sd_option options[] = {
+                { "help", 0, false, option_help, &runlevel_help }, {}
         };
-
-        static const struct option options[] = {
-                { "help",      no_argument,       NULL, ARG_HELP    },
-                {}
-        };
-
-        int c;
-
-        assert(argc >= 0);
-        assert(argv);
-
-        while ((c = getopt_long(argc, argv, "", options, NULL)) >= 0)
-                switch (c) {
-
-                case ARG_HELP:
-                        runlevel_help();
-                        return 0;
-
-                case '?':
-                        return -EINVAL;
-
-                default:
-                        assert_not_reached("Unhandled option");
-                }
-
-        if (optind < argc) {
-                log_error("Too many arguments.");
-                return -EINVAL;
-        }
-
-        return 1;
+        return option_parse_argv(options, argc, argv, NULL);
 }
 
 static int parse_argv(int argc, char *argv[]) {

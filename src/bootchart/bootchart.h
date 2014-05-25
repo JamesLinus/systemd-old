@@ -128,8 +128,8 @@ extern double arg_scale_y;
 extern int overrun;
 extern double interval;
 
-extern char arg_output_path[PATH_MAX];
-extern char arg_init_path[PATH_MAX];
+extern const char *arg_output_path;
+extern const char *arg_init_path;
 
 extern FILE *of;
 extern int sysfd;

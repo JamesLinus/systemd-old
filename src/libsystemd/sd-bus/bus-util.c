@@ -1116,6 +1116,41 @@ int bus_map_all_properties(sd_bus *bus,
         return bus_message_map_all_properties(bus, m, map, userdata);
 }
 
+int option_transport_user(const struct sd_option *option, char *optarg) {
+        BusTransport *transport = (BusTransport *) option->userdata;
+
+        transport->user = streq(option->longopt, "user");
+
+        return 1;
+}
+
+int option_transport_host(const struct sd_option *option, char *optarg) {
+        BusTransport *transport = (BusTransport *) option->userdata;
+
+        if (!optarg) {
+                log_error("--%s needs an argument", option->longopt);
+                return -EINVAL;
+        }
+
+        transport->type = BUS_TRANSPORT_REMOTE;
+        transport->host = optarg;
+
+        return 1;
+}
+
+int option_transport_machine(const struct sd_option *option, char *optarg) {
+        BusTransport *transport = (BusTransport *) option->userdata;
+
+        if (!optarg) {
+                log_error("--%s needs an argument", option->longopt);
+                return -EINVAL;
+        }
+
+        transport->type = BUS_TRANSPORT_CONTAINER;
+        transport->host = optarg;
+
+        return 1;
+}
 static int _bus_open_transport(BusTransport *transport, bool systemd, sd_bus **bus) {
         int r;
 

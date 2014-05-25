@@ -39,8 +39,9 @@
 #include "bus-util.h"
 #include "bus-error.h"
 #include "unit-name.h"
+#include "strv.h"
 
-static bool arg_no_pager = false;
+static bool arg_pager = true;
 static bool arg_kernel_threads = false;
 static bool arg_all = false;
 static int arg_full = -1;
@@ -59,89 +60,30 @@ static void help(void) {
                , program_invocation_short_name);
 }
 
-static int parse_argv(int argc, char *argv[]) {
-
-        enum {
-                ARG_NO_PAGER = 0x100,
-                ARG_VERSION,
-        };
-
-        static const struct option options[] = {
-                { "help",      no_argument,       NULL, 'h'          },
-                { "version",   no_argument,       NULL, ARG_VERSION  },
-                { "no-pager",  no_argument,       NULL, ARG_NO_PAGER },
-                { "all",       no_argument,       NULL, 'a'          },
-                { "full",      no_argument,       NULL, 'l'          },
-                { "machine",   required_argument, NULL, 'M'          },
+int main(int argc, char *argv[]) {
+        static const struct sd_option options[] = {
+                OPTIONS_BASIC(help),
+                { "no-pager",  0 , false, option_set_bool,     &arg_pager,          false },
+                { "all",      'a', false, option_set_bool,     &arg_all,            true  },
+                { "full",     'l', false, option_set_bool,     &arg_full,           true  },
+                { NULL,       'k', false, option_set_bool,     &arg_kernel_threads, true  },
+                { "machine",  'M', true,  option_parse_string, &arg_machine               },
                 {}
         };
-
-        int c;
-
-        assert(argc >= 1);
-        assert(argv);
-
-        while ((c = getopt_long(argc, argv, "hkalM:", options, NULL)) >= 0)
-
-                switch (c) {
-
-                case 'h':
-                        help();
-                        return 0;
-
-                case ARG_VERSION:
-                        puts(PACKAGE_STRING);
-                        puts(SYSTEMD_FEATURES);
-                        return 0;
-
-                case ARG_NO_PAGER:
-                        arg_no_pager = true;
-                        break;
-
-                case 'a':
-                        arg_all = true;
-                        break;
-
-                case 'l':
-                        arg_full = true;
-                        break;
-
-                case 'k':
-                        arg_kernel_threads = true;
-                        break;
-
-                case 'M':
-                        arg_machine = optarg;
-                        break;
-
-                case '?':
-                        return -EINVAL;
-
-                default:
-                        assert_not_reached("Unhandled option");
-                }
-
-        return 1;
-}
-
-int main(int argc, char *argv[]) {
-        int r = 0, retval = EXIT_FAILURE;
+        int r = 0;
         int output_flags;
         _cleanup_free_ char *root = NULL;
         _cleanup_bus_close_unref_ sd_bus *bus = NULL;
+        char **args;
 
         log_parse_environment();
         log_open();
 
-        r = parse_argv(argc, argv);
-        if (r < 0)
+        r = option_parse_argv(options, argc, argv, &args);
+        if (r <= 0)
                 goto finish;
-        else if (r == 0) {
-                retval = EXIT_SUCCESS;
-                goto finish;
-        }
 
-        if (!arg_no_pager) {
+        if (arg_pager) {
                 r = pager_open(false);
                 if (r > 0) {
                         if (arg_full == -1)
@@ -159,19 +101,19 @@ int main(int argc, char *argv[]) {
                 goto finish;
         }
 
-        if (optind < argc) {
-                int i;
+        if (strv_length(argv) > 0) {
+                char **a;
 
-                for (i = optind; i < argc; i++) {
+                STRV_FOREACH(a, args) {
                         int q;
 
-                        fprintf(stdout, "%s:\n", argv[i]);
+                        fprintf(stdout, "%s:\n", *a);
                         fflush(stdout);
 
                         if (arg_machine)
-                                root = strjoin("machine/", arg_machine, "/", argv[i], NULL);
+                                root = strjoin("machine/", arg_machine, "/", *a, NULL);
                         else
-                                root = strdup(argv[i]);
+                                root = strdup(*a);
                         if (!root)
                                 return log_oom();
 
@@ -256,14 +198,11 @@ int main(int argc, char *argv[]) {
                 }
         }
 
-        if (r < 0) {
+        if (r < 0)
                 log_error("Failed to list cgroup tree %s: %s", root, strerror(-r));
-                retval = EXIT_FAILURE;
-        } else
-                retval = EXIT_SUCCESS;
 
 finish:
         pager_close();
 
-        return retval;
+        return r < 0 ? EXIT_FAILURE : EXIT_SUCCESS;
 }

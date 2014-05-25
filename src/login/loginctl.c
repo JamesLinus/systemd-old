@@ -22,7 +22,6 @@
 #include <unistd.h>
 #include <errno.h>
 #include <string.h>
-#include <getopt.h>
 #include <pwd.h>
 #include <locale.h>
 
@@ -32,7 +31,7 @@
 #include "log.h"
 #include "util.h"
 #include "macro.h"
-#include "build.h"
+#include "option.h"
 #include "strv.h"
 #include "unit-name.h"
 #include "sysfs-show.h"
@@ -43,7 +42,7 @@
 static char **arg_property = NULL;
 static bool arg_all = false;
 static bool arg_full = false;
-static bool arg_no_pager = false;
+static bool arg_pager = false;
 static bool arg_legend = true;
 static const char *arg_kill_who = NULL;
 static int arg_signal = SIGTERM;
@@ -1048,115 +1047,20 @@ static void help(void) {
                , program_invocation_short_name);
 }
 
-static int parse_argv(int argc, char *argv[]) {
-
-        enum {
-                ARG_VERSION = 0x100,
-                ARG_NO_PAGER,
-                ARG_NO_LEGEND,
-                ARG_KILL_WHO,
-                ARG_NO_ASK_PASSWORD,
-        };
-
-        static const struct option options[] = {
-                { "help",            no_argument,       NULL, 'h'                 },
-                { "version",         no_argument,       NULL, ARG_VERSION         },
-                { "property",        required_argument, NULL, 'p'                 },
-                { "all",             no_argument,       NULL, 'a'                 },
-                { "full",            no_argument,       NULL, 'l'                 },
-                { "no-pager",        no_argument,       NULL, ARG_NO_PAGER        },
-                { "no-legend",       no_argument,       NULL, ARG_NO_LEGEND       },
-                { "kill-who",        required_argument, NULL, ARG_KILL_WHO        },
-                { "signal",          required_argument, NULL, 's'                 },
-                { "host",            required_argument, NULL, 'H'                 },
-                { "machine",         required_argument, NULL, 'M'                 },
-                { "no-ask-password", no_argument,       NULL, ARG_NO_ASK_PASSWORD },
+int main(int argc, char *argv[]) {
+        static const struct sd_option options[] = {
+                OPTIONS_BASIC(help),
+                OPTIONS_TRANSPORT_NO_USER(arg_transport),
+                { "property",        'p', true,  option_strv_extend,  &arg_property            },
+                { "all",             'a', false, option_set_bool,     &arg_all,          true  },
+                { "full",            'l', false, option_set_bool,     &arg_full,         true  },
+                { "kill-who",         0 , true,  option_parse_string, &arg_kill_who            },
+                { "signal",          's', true,  option_parse_signal, &arg_signal              },
+                { "no-pager",         0 , false, option_set_bool,     &arg_pager,        false },
+                { "no-legend",        0 , false, option_set_bool,     &arg_legend,       false },
+                { "no-ask-password",  0 , false, option_set_bool,     &arg_ask_password, false },
                 {}
         };
-
-        int c, r;
-
-        assert(argc >= 0);
-        assert(argv);
-
-        while ((c = getopt_long(argc, argv, "hp:als:H:M:", options, NULL)) >= 0)
-
-                switch (c) {
-
-                case 'h':
-                        help();
-                        return 0;
-
-                case ARG_VERSION:
-                        puts(PACKAGE_STRING);
-                        puts(SYSTEMD_FEATURES);
-                        return 0;
-
-                case 'p': {
-                        r = strv_extend(&arg_property, optarg);
-                        if (r < 0)
-                                return log_oom();
-
-                        /* If the user asked for a particular
-                         * property, show it to him, even if it is
-                         * empty. */
-                        arg_all = true;
-                        break;
-                }
-
-                case 'a':
-                        arg_all = true;
-                        break;
-
-                case 'l':
-                        arg_full = true;
-                        break;
-
-                case ARG_NO_PAGER:
-                        arg_no_pager = true;
-                        break;
-
-                case ARG_NO_LEGEND:
-                        arg_legend = false;
-                        break;
-
-                case ARG_NO_ASK_PASSWORD:
-                        arg_ask_password = false;
-                        break;
-
-                case ARG_KILL_WHO:
-                        arg_kill_who = optarg;
-                        break;
-
-                case 's':
-                        arg_signal = signal_from_string_try_harder(optarg);
-                        if (arg_signal < 0) {
-                                log_error("Failed to parse signal string %s.", optarg);
-                                return -EINVAL;
-                        }
-                        break;
-
-                case 'H':
-                        arg_transport.type = BUS_TRANSPORT_REMOTE;
-                        arg_transport.host = optarg;
-                        break;
-
-                case 'M':
-                        arg_transport.type = BUS_TRANSPORT_CONTAINER;
-                        arg_transport.host = optarg;
-                        break;
-
-                case '?':
-                        return -EINVAL;
-
-                default:
-                        assert_not_reached("Unhandled option");
-                }
-
-        return 1;
-}
-
-int main(int argc, char *argv[]) {
         static const xyzctl_verb verbs[] = {
                 { "list-sessions",     LESS,  1, list_sessions,  XYZCTL_BUS | XYZCTL_PAGER  },
                 { "session-status",    MORE,  2, show_session,   XYZCTL_BUS | XYZCTL_PAGER  },
@@ -1184,18 +1088,21 @@ int main(int argc, char *argv[]) {
                 {}
         };
         _cleanup_bus_close_unref_ sd_bus *bus = NULL;
+        char **args;
         int r;
 
         setlocale(LC_ALL, "");
         log_parse_environment();
         log_open();
 
-        r = parse_argv(argc, argv);
+        r = option_parse_argv(options, argc, argv, &args);
         if (r <= 0)
                 goto finish;
+        if (arg_property)
+                arg_all = true;
 
         r = bus_open_transport(&arg_transport, &bus);
-        r = xyzctl_main(verbs, bus, r, argv + optind, &help, arg_ask_password, !arg_no_pager);
+        r = xyzctl_main(verbs, bus, r, args, &help, arg_ask_password, arg_pager);
 
 finish:
         strv_free(arg_property);

@@ -41,8 +41,7 @@ static BusTransport arg_transport = {BUS_TRANSPORT_LOCAL};
 static const char *arg_service_type = NULL;
 static const char *arg_exec_user = NULL;
 static const char *arg_exec_group = NULL;
-static int arg_nice = 0;
-static bool arg_nice_set = false;
+static int arg_nice = PRIO_MIN - 1;
 static char **arg_environment = NULL;
 static char **arg_property = NULL;
 
@@ -67,172 +66,6 @@ static void help(void) {
                "     --nice=NICE            Nice level\n"
                "     --setenv=NAME=VALUE    Set environment\n",
                program_invocation_short_name);
-}
-
-static int parse_argv(int argc, char *argv[]) {
-
-        enum {
-                ARG_VERSION = 0x100,
-                ARG_USER,
-                ARG_SYSTEM,
-                ARG_SCOPE,
-                ARG_UNIT,
-                ARG_DESCRIPTION,
-                ARG_SLICE,
-                ARG_SEND_SIGHUP,
-                ARG_EXEC_USER,
-                ARG_EXEC_GROUP,
-                ARG_SERVICE_TYPE,
-                ARG_NICE,
-                ARG_SETENV
-        };
-
-        static const struct option options[] = {
-                { "help",              no_argument,       NULL, 'h'              },
-                { "version",           no_argument,       NULL, ARG_VERSION      },
-                { "user",              no_argument,       NULL, ARG_USER         },
-                { "system",            no_argument,       NULL, ARG_SYSTEM       },
-                { "scope",             no_argument,       NULL, ARG_SCOPE        },
-                { "unit",              required_argument, NULL, ARG_UNIT         },
-                { "description",       required_argument, NULL, ARG_DESCRIPTION  },
-                { "slice",             required_argument, NULL, ARG_SLICE        },
-                { "remain-after-exit", no_argument,       NULL, 'r'              },
-                { "send-sighup",       no_argument,       NULL, ARG_SEND_SIGHUP  },
-                { "host",              required_argument, NULL, 'H'              },
-                { "machine",           required_argument, NULL, 'M'              },
-                { "service-type",      required_argument, NULL, ARG_SERVICE_TYPE },
-                { "uid",               required_argument, NULL, ARG_EXEC_USER    },
-                { "gid",               required_argument, NULL, ARG_EXEC_GROUP   },
-                { "nice",              required_argument, NULL, ARG_NICE         },
-                { "setenv",            required_argument, NULL, ARG_SETENV       },
-                { "property",          required_argument, NULL, 'p'              },
-                {},
-        };
-
-        int r, c;
-
-        assert(argc >= 0);
-        assert(argv);
-
-        while ((c = getopt_long(argc, argv, "+hrH:M:p:", options, NULL)) >= 0)
-
-                switch (c) {
-
-                case 'h':
-                        help();
-                        return 0;
-
-                case ARG_VERSION:
-                        puts(PACKAGE_STRING);
-                        puts(SYSTEMD_FEATURES);
-                        return 0;
-
-                case ARG_USER:
-                        arg_transport.user = true;
-                        break;
-
-                case ARG_SYSTEM:
-                        arg_transport.user = false;
-                        break;
-
-                case ARG_SCOPE:
-                        arg_scope = true;
-                        break;
-
-                case ARG_UNIT:
-                        arg_unit = optarg;
-                        break;
-
-                case ARG_DESCRIPTION:
-                        arg_description = optarg;
-                        break;
-
-                case ARG_SLICE:
-                        arg_slice = optarg;
-                        break;
-
-                case ARG_SEND_SIGHUP:
-                        arg_send_sighup = true;
-                        break;
-
-                case 'r':
-                        arg_remain_after_exit = true;
-                        break;
-
-                case 'H':
-                        arg_transport.type = BUS_TRANSPORT_REMOTE;
-                        arg_transport.host = optarg;
-                        break;
-
-                case 'M':
-                        arg_transport.type = BUS_TRANSPORT_CONTAINER;
-                        arg_transport.host = optarg;
-                        break;
-
-                case ARG_SERVICE_TYPE:
-                        arg_service_type = optarg;
-                        break;
-
-                case ARG_EXEC_USER:
-                        arg_exec_user = optarg;
-                        break;
-
-                case ARG_EXEC_GROUP:
-                        arg_exec_group = optarg;
-                        break;
-
-                case ARG_NICE:
-                        r = safe_atoi(optarg, &arg_nice);
-                        if (r < 0 || arg_nice < PRIO_MIN || arg_nice >= PRIO_MAX) {
-                                log_error("Failed to parse nice value");
-                                return -EINVAL;
-                        }
-
-                        arg_nice_set = true;
-                        break;
-
-                case ARG_SETENV:
-
-                        if (strv_extend(&arg_environment, optarg) < 0)
-                                return log_oom();
-
-                        break;
-
-                case 'p':
-
-                        if (strv_extend(&arg_property, optarg) < 0)
-                                return log_oom();
-
-                        break;
-
-                case '?':
-                        return -EINVAL;
-
-                default:
-                        assert_not_reached("Unhandled option");
-                }
-
-        if (optind >= argc) {
-                log_error("Command line to execute required.");
-                return -EINVAL;
-        }
-
-        if (arg_transport.user && arg_transport.type != BUS_TRANSPORT_LOCAL) {
-                log_error("Execution in user context is not supported on non-local systems.");
-                return -EINVAL;
-        }
-
-        if (arg_scope && arg_transport.type != BUS_TRANSPORT_LOCAL) {
-                log_error("Scope execution is not supported on non-local systems.");
-                return -EINVAL;
-        }
-
-        if (arg_scope && (arg_remain_after_exit || arg_service_type)) {
-                log_error("--remain-after-exit and --service-type= are not supported in --scope mode.");
-                return -EINVAL;
-        }
-
-        return 1;
 }
 
 static int message_start_transient_unit_new(sd_bus *bus, const char *name, sd_bus_message **ret) {
@@ -365,7 +198,7 @@ static int start_transient_service(
                         return bus_log_create_error(r);
         }
 
-        if (arg_nice_set) {
+        if (arg_nice >= PRIO_MIN) {
                 r = sd_bus_message_append(m, "(sv)", "Nice", "i", arg_nice);
                 if (r < 0)
                         return bus_log_create_error(r);
@@ -485,7 +318,7 @@ static int start_transient_scope(
         if (r < 0)
                 return bus_log_create_error(r);
 
-        if (arg_nice_set) {
+        if (arg_nice >= PRIO_MIN) {
                 if (setpriority(PRIO_PROCESS, 0, arg_nice) < 0) {
                         log_error("Failed to set nice level: %m");
                         return -errno;
@@ -558,7 +391,37 @@ static int start_transient_scope(
         return -errno;
 }
 
+static int parse_nice(const struct sd_option *option, char *optarg) {
+        int r;
+        int *data = (int*) option->userdata;
+        r = safe_atoi(optarg, data);
+        if (r < 0 || arg_nice < PRIO_MIN || arg_nice >= PRIO_MAX) {
+                log_error("Failed to parse nice value");
+                return -EINVAL;
+        }
+
+        return 1;
+}
+
 int main(int argc, char* argv[]) {
+        static const struct sd_option options[] = {
+                OPTIONS_BASIC(help),
+                OPTIONS_TRANSPORT(arg_transport),
+                { "scope",               0, false, option_set_bool,     &arg_scope,             true },
+                { "unit",                0, true,  option_parse_string, &arg_unit                    },
+                { "description",         0, true,  option_parse_string, &arg_description             },
+                { "slice",               0, true,  option_parse_string, &arg_slice                   },
+                { "remain-after-exit", 'r', false, option_set_bool,     &arg_remain_after_exit, true },
+                { "send-sighup",         0, false, option_set_bool,     &arg_send_sighup,       true },
+                { "service-type",        0, true,  option_parse_string, &arg_service_type            },
+                { "uid",                 0, true,  option_parse_string, &arg_exec_user               },
+                { "gid",                 0, true,  option_parse_string, &arg_exec_group              },
+                { "nice",                0, true,  parse_nice,          &arg_nice                    },
+                { "setenv",              0, true,  option_strv_extend,  &arg_environment             },
+                { "property",          'p', true,  option_strv_extend,  &arg_property                },
+                {}
+        };
+        char **args = NULL;
         _cleanup_bus_error_free_ sd_bus_error error = SD_BUS_ERROR_NULL;
         _cleanup_bus_close_unref_ sd_bus *bus = NULL;
         _cleanup_free_ char *description = NULL, *command = NULL;
@@ -567,19 +430,37 @@ int main(int argc, char* argv[]) {
         log_parse_environment();
         log_open();
 
-        r = parse_argv(argc, argv);
+        r = option_parse_argv(options, argc, argv, &args);
         if (r <= 0)
                 goto finish;
 
-        r = find_binary(argv[optind], &command);
-        if (r < 0) {
-                log_error("Failed to find executable %s: %s", argv[optind], strerror(-r));
+        if (arg_transport.user && arg_transport.type != BUS_TRANSPORT_LOCAL) {
+                log_error("Execution in user context is not supported on non-local systems.");
+                r = -EINVAL;
                 goto finish;
         }
-        argv[optind] = command;
+
+        if (arg_scope && arg_transport.type != BUS_TRANSPORT_LOCAL) {
+                log_error("Scope execution is not supported on non-local systems.");
+                r = -EINVAL;
+                goto finish;
+        }
+
+        if (arg_scope && (arg_remain_after_exit || arg_service_type)) {
+                log_error("--remain-after-exit and --service-type= are not supported in --scope mode.");
+                r = -EINVAL;
+                goto finish;
+        }
+
+        r = find_binary(args[0], &command);
+        if (r < 0) {
+                log_error("Failed to find executable %s: %s", args[0], strerror(-r));
+                goto finish;
+        }
+        args[0] = command;
 
         if (!arg_description) {
-                description = strv_join(argv + optind, " ");
+                description = strv_join(args, " ");
                 if (!description) {
                         r = log_oom();
                         goto finish;
@@ -595,9 +476,9 @@ int main(int argc, char* argv[]) {
         }
 
         if (arg_scope)
-                r = start_transient_scope(bus, argv + optind, &error);
+                r = start_transient_scope(bus, args, &error);
         else
-                r = start_transient_service(bus, argv + optind, &error);
+                r = start_transient_service(bus, args, &error);
 
 finish:
         strv_free(arg_environment);

@@ -23,7 +23,6 @@
 #include <stdio.h>
 #include <errno.h>
 #include <string.h>
-#include <getopt.h>
 
 #include "sd-id128.h"
 #include "sd-messages.h"
@@ -31,7 +30,7 @@
 #include "util.h"
 #include "strv.h"
 #include "fileio.h"
-#include "build.h"
+#include "option.h"
 #include "sleep-config.h"
 #include "def.h"
 
@@ -147,46 +146,23 @@ static void help(void) {
 }
 
 static int parse_argv(int argc, char *argv[]) {
-        enum {
-                ARG_VERSION = 0x100,
+        static const struct sd_option options[] = {
+                OPTIONS_BASIC(help), {}
         };
+        int r;
+        char **args;
 
-        static const struct option options[] = {
-                { "help",         no_argument,       NULL, 'h'           },
-                { "version",      no_argument,       NULL, ARG_VERSION   },
-                {}
-        };
+        r = option_parse_argv(options, argc, argv, &args);
+        if (r <= 0)
+                return r;
 
-        int c;
-
-        assert(argc >= 0);
-        assert(argv);
-
-        while ((c = getopt_long(argc, argv, "h", options, NULL)) >= 0)
-                switch(c) {
-                case 'h':
-                        help();
-                        return 0; /* done */
-
-                case ARG_VERSION:
-                        puts(PACKAGE_STRING);
-                        puts(SYSTEMD_FEATURES);
-                        return 0 /* done */;
-
-                case '?':
-                        return -EINVAL;
-
-                default:
-                        assert_not_reached("Unhandled option");
-                }
-
-        if (argc - optind != 1) {
+        if (strv_length(args) != 1) {
                 log_error("Usage: %s COMMAND",
                           program_invocation_short_name);
                 return -EINVAL;
         }
 
-        arg_verb = argv[optind];
+        arg_verb = args[0];
 
         if (!streq(arg_verb, "suspend") &&
             !streq(arg_verb, "hibernate") &&

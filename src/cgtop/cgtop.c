@@ -26,7 +26,6 @@
 #include <stdint.h>
 #include <unistd.h>
 #include <alloca.h>
-#include <getopt.h>
 
 #include "path-util.h"
 #include "util.h"
@@ -34,6 +33,7 @@
 #include "cgroup-util.h"
 #include "build.h"
 #include "fileio.h"
+#include "option.h"
 
 typedef struct Group {
         char *path;
@@ -568,122 +568,33 @@ static void help(void) {
                , program_invocation_short_name, arg_depth);
 }
 
-static int parse_argv(int argc, char *argv[]) {
-
-        enum {
-                ARG_VERSION = 0x100,
-                ARG_DEPTH,
-                ARG_CPU_TYPE
-        };
-
-        static const struct option options[] = {
-                { "help",       no_argument,       NULL, 'h'         },
-                { "version",    no_argument,       NULL, ARG_VERSION },
-                { "delay",      required_argument, NULL, 'd'         },
-                { "iterations", required_argument, NULL, 'n'         },
-                { "batch",      no_argument,       NULL, 'b'         },
-                { "depth",      required_argument, NULL, ARG_DEPTH   },
-                { "cpu",        optional_argument, NULL, ARG_CPU_TYPE},
-                {}
-        };
-
-        int c;
-        int r;
-
-        assert(argc >= 1);
-        assert(argv);
-
-        while ((c = getopt_long(argc, argv, "hptcmin:bd:", options, NULL)) >= 0)
-
-                switch (c) {
-
-                case 'h':
-                        help();
-                        return 0;
-
-                case ARG_VERSION:
-                        puts(PACKAGE_STRING);
-                        puts(SYSTEMD_FEATURES);
-                        return 0;
-
-                case ARG_CPU_TYPE:
-                        if (optarg) {
-                                if (strcmp(optarg, "time") == 0)
-                                        arg_cpu_type = CPU_TIME;
-                                else if (strcmp(optarg, "percentage") == 0)
-                                        arg_cpu_type = CPU_PERCENT;
-                                else
-                                        return -EINVAL;
-                        }
-                        break;
-
-                case ARG_DEPTH:
-                        r = safe_atou(optarg, &arg_depth);
-                        if (r < 0) {
-                                log_error("Failed to parse depth parameter.");
-                                return -EINVAL;
-                        }
-
-                        break;
-
-                case 'd':
-                        r = parse_sec(optarg, &arg_delay);
-                        if (r < 0 || arg_delay <= 0) {
-                                log_error("Failed to parse delay parameter.");
-                                return -EINVAL;
-                        }
-
-                        break;
-
-                case 'n':
-                        r = safe_atou(optarg, &arg_iterations);
-                        if (r < 0) {
-                                log_error("Failed to parse iterations parameter.");
-                                return -EINVAL;
-                        }
-
-                        break;
-
-                case 'b':
-                        arg_batch = true;
-                        break;
-
-                case 'p':
-                        arg_order = ORDER_PATH;
-                        break;
-
-                case 't':
-                        arg_order = ORDER_TASKS;
-                        break;
-
-                case 'c':
-                        arg_order = ORDER_CPU;
-                        break;
-
-                case 'm':
-                        arg_order = ORDER_MEMORY;
-                        break;
-
-                case 'i':
-                        arg_order = ORDER_IO;
-                        break;
-
-                case '?':
+static int parse_cpu_type(const struct sd_option *option, char *optarg) {
+        if (optarg) {
+                if (strcmp(optarg, "time") == 0)
+                        arg_cpu_type = CPU_TIME;
+                else if (strcmp(optarg, "percentage") == 0)
+                        arg_cpu_type = CPU_PERCENT;
+                else
                         return -EINVAL;
-
-                default:
-                        assert_not_reached("Unhandled option");
-                }
-
-        if (optind < argc) {
-                log_error("Too many arguments.");
-                return -EINVAL;
         }
-
         return 1;
 }
 
 int main(int argc, char *argv[]) {
+        static const struct sd_option options[] = {
+                OPTIONS_BASIC(help),
+                { NULL,         'p', false, option_set_int,    &arg_order,      ORDER_PATH   },
+                { NULL,         't', false, option_set_int,    &arg_order,      ORDER_TASKS  },
+                { NULL,         'c', false, option_set_int,    &arg_order,      ORDER_CPU    },
+                { NULL,         'm', false, option_set_int,    &arg_order,      ORDER_MEMORY },
+                { NULL,         'i', false, option_set_int,    &arg_order,      ORDER_IO     },
+                { "cpu",         0 , true,  parse_cpu_type                                   },
+                { "delay",      'd', true,  option_parse_sec,  &arg_delay                    },
+                { "iterations", 'n', true,  option_parse_uint, &arg_iterations               },
+                { "batch",      'b', false, option_set_bool,   &arg_batch,      true         },
+                { "depth",       0 , true,  option_parse_uint, &arg_depth                    },
+                {}
+        };
         int r;
         Hashmap *a = NULL, *b = NULL;
         unsigned iteration = 0;
@@ -693,7 +604,7 @@ int main(int argc, char *argv[]) {
         log_parse_environment();
         log_open();
 
-        r = parse_argv(argc, argv);
+        r = option_parse_argv(options, argc, argv, NULL);
         if (r <= 0)
                 goto finish;
 

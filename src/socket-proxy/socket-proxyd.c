@@ -21,7 +21,6 @@
 
 #include <arpa/inet.h>
 #include <errno.h>
-#include <getopt.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -38,7 +37,8 @@
 #include "socket-util.h"
 #include "util.h"
 #include "event-util.h"
-#include "build.h"
+#include "option.h"
+#include "strv.h"
 #include "set.h"
 #include "path-util.h"
 
@@ -598,68 +598,34 @@ static void help(void) {
                program_invocation_short_name);
 }
 
-static int parse_argv(int argc, char *argv[]) {
-
-        enum {
-                ARG_VERSION = 0x100,
-                ARG_IGNORE_ENV
-        };
-
-        static const struct option options[] = {
-                { "help",       no_argument, NULL, 'h'           },
-                { "version",    no_argument, NULL, ARG_VERSION   },
-                {}
-        };
-
-        int c;
-
-        assert(argc >= 0);
-        assert(argv);
-
-        while ((c = getopt_long(argc, argv, "h", options, NULL)) >= 0)
-
-                switch (c) {
-
-                case 'h':
-                        help();
-                        return 0;
-
-                case ARG_VERSION:
-                        puts(PACKAGE_STRING);
-                        puts(SYSTEMD_FEATURES);
-                        return 0;
-
-                case '?':
-                        return -EINVAL;
-
-                default:
-                        assert_not_reached("Unhandled option");
-                }
-
-        if (optind >= argc) {
-                log_error("Not enough parameters.");
-                return -EINVAL;
-        }
-
-        if (argc != optind+1) {
-                log_error("Too many parameters.");
-                return -EINVAL;
-        }
-
-        arg_remote_host = argv[optind];
-        return 1;
-}
-
 int main(int argc, char *argv[]) {
+        static const struct sd_option options[] = {
+                OPTIONS_BASIC(help), {}
+        };
+        char **args;
         Context context = {};
         int r, n, fd;
 
         log_parse_environment();
         log_open();
 
-        r = parse_argv(argc, argv);
+        r = option_parse_argv(options, argc, argv, &args);
         if (r <= 0)
                 goto finish;
+
+        if (strv_length(args) < 1) {
+                log_error("Not enough parameters.");
+                r = -EINVAL;
+                goto finish;
+        }
+
+        if (strv_length(args) > 1) {
+                log_error("Too many parameters.");
+                r = -EINVAL;
+                goto finish;
+        }
+
+        arg_remote_host = args[0];
 
         r = sd_event_default(&context.event);
         if (r < 0) {

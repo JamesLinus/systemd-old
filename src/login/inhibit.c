@@ -138,85 +138,17 @@ static void help(void) {
                , program_invocation_short_name);
 }
 
-static int parse_argv(int argc, char *argv[]) {
-
-        enum {
-                ARG_VERSION = 0x100,
-                ARG_WHAT,
-                ARG_WHO,
-                ARG_WHY,
-                ARG_MODE,
-                ARG_LIST,
-        };
-
-        static const struct option options[] = {
-                { "help",         no_argument,       NULL, 'h'              },
-                { "version",      no_argument,       NULL, ARG_VERSION      },
-                { "what",         required_argument, NULL, ARG_WHAT         },
-                { "who",          required_argument, NULL, ARG_WHO          },
-                { "why",          required_argument, NULL, ARG_WHY          },
-                { "mode",         required_argument, NULL, ARG_MODE         },
-                { "list",         no_argument,       NULL, ARG_LIST         },
+int main(int argc, char *argv[]) {
+        static const struct sd_option options[] = {
+                OPTIONS_BASIC(help),
+                { "what", 0, true,  option_parse_string, &arg_what                },
+                { "who",  0, true,  option_parse_string, &arg_who                 },
+                { "why",  0, true,  option_parse_string, &arg_why                 },
+                { "mode", 0, true,  option_parse_string, &arg_mode                },
+                { "list", 0, false, option_set_int,      &arg_action, ACTION_LIST },
                 {}
         };
-
-        int c;
-
-        assert(argc >= 0);
-        assert(argv);
-
-        while ((c = getopt_long(argc, argv, "+h", options, NULL)) >= 0)
-
-                switch (c) {
-
-                case 'h':
-                        help();
-                        return 0;
-
-                case ARG_VERSION:
-                        puts(PACKAGE_STRING);
-                        puts(SYSTEMD_FEATURES);
-                        return 0;
-
-                case ARG_WHAT:
-                        arg_what = optarg;
-                        break;
-
-                case ARG_WHO:
-                        arg_who = optarg;
-                        break;
-
-                case ARG_WHY:
-                        arg_why = optarg;
-                        break;
-
-                case ARG_MODE:
-                        arg_mode = optarg;
-                        break;
-
-                case ARG_LIST:
-                        arg_action = ACTION_LIST;
-                        break;
-
-                case '?':
-                        return -EINVAL;
-
-                default:
-                        assert_not_reached("Unhandled option");
-                }
-
-        if (arg_action == ACTION_INHIBIT && argc == 1)
-                arg_action = ACTION_LIST;
-
-        else if (arg_action == ACTION_INHIBIT && optind >= argc) {
-                log_error("Missing command line to execute.");
-                return -EINVAL;
-        }
-
-        return 1;
-}
-
-int main(int argc, char *argv[]) {
+        char **args;
         _cleanup_bus_error_free_ sd_bus_error error = SD_BUS_ERROR_NULL;
         _cleanup_bus_close_unref_ sd_bus *bus = NULL;
         int r;
@@ -224,11 +156,19 @@ int main(int argc, char *argv[]) {
         log_parse_environment();
         log_open();
 
-        r = parse_argv(argc, argv);
+        r = option_parse_argv(options, argc, argv, &args);
         if (r < 0)
                 return EXIT_FAILURE;
         if (r == 0)
                 return EXIT_SUCCESS;
+
+        if (arg_action == ACTION_INHIBIT && argc == 1)
+                arg_action = ACTION_LIST;
+
+        else if (arg_action == ACTION_INHIBIT && strv_length(args) <= 0) {
+                log_error("Missing command line to execute.");
+                return EXIT_FAILURE;
+        }
 
         r = sd_bus_default_system(&bus);
         if (r < 0) {

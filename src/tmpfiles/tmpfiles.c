@@ -31,7 +31,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stddef.h>
-#include <getopt.h>
 #include <stdbool.h>
 #include <time.h>
 #include <sys/types.h>
@@ -52,8 +51,8 @@
 #include "conf-files.h"
 #include "capability.h"
 #include "specifier.h"
-#include "build.h"
 #include "copy.h"
+#include "option.h"
 
 /* This reads all files listed in /etc/tmpfiles.d/?*.conf and creates
  * them in the file system. This is intended to be used to create
@@ -1430,100 +1429,6 @@ static void help(void) {
                program_invocation_short_name);
 }
 
-static int parse_argv(int argc, char *argv[]) {
-
-        enum {
-                ARG_VERSION = 0x100,
-                ARG_CREATE,
-                ARG_CLEAN,
-                ARG_REMOVE,
-                ARG_BOOT,
-                ARG_PREFIX,
-                ARG_EXCLUDE_PREFIX,
-                ARG_ROOT,
-        };
-
-        static const struct option options[] = {
-                { "help",           no_argument,         NULL, 'h'                },
-                { "version",        no_argument,         NULL, ARG_VERSION        },
-                { "create",         no_argument,         NULL, ARG_CREATE         },
-                { "clean",          no_argument,         NULL, ARG_CLEAN          },
-                { "remove",         no_argument,         NULL, ARG_REMOVE         },
-                { "boot",           no_argument,         NULL, ARG_BOOT           },
-                { "prefix",         required_argument,   NULL, ARG_PREFIX         },
-                { "exclude-prefix", required_argument,   NULL, ARG_EXCLUDE_PREFIX },
-                { "root",           required_argument,   NULL, ARG_ROOT           },
-                {}
-        };
-
-        int c;
-
-        assert(argc >= 0);
-        assert(argv);
-
-        while ((c = getopt_long(argc, argv, "h", options, NULL)) >= 0)
-
-                switch (c) {
-
-                case 'h':
-                        help();
-                        return 0;
-
-                case ARG_VERSION:
-                        puts(PACKAGE_STRING);
-                        puts(SYSTEMD_FEATURES);
-                        return 0;
-
-                case ARG_CREATE:
-                        arg_create = true;
-                        break;
-
-                case ARG_CLEAN:
-                        arg_clean = true;
-                        break;
-
-                case ARG_REMOVE:
-                        arg_remove = true;
-                        break;
-
-                case ARG_BOOT:
-                        arg_boot = true;
-                        break;
-
-                case ARG_PREFIX:
-                        if (strv_push(&arg_include_prefixes, optarg) < 0)
-                                return log_oom();
-                        break;
-
-                case ARG_EXCLUDE_PREFIX:
-                        if (strv_push(&arg_exclude_prefixes, optarg) < 0)
-                                return log_oom();
-                        break;
-
-                case ARG_ROOT:
-                        free(arg_root);
-                        arg_root = path_make_absolute_cwd(optarg);
-                        if (!arg_root)
-                                return log_oom();
-
-                        path_kill_slashes(arg_root);
-                        break;
-
-                case '?':
-                        return -EINVAL;
-
-                default:
-                        assert_not_reached("Unhandled option");
-                }
-
-        if (!arg_clean && !arg_create && !arg_remove) {
-                log_error("You need to specify at least one of --clean, --create or --remove.");
-                return -EINVAL;
-        }
-
-        return 1;
-}
-
 static int read_config_file(const char *fn, bool ignore_enoent) {
         _cleanup_fclose_ FILE *f = NULL;
         char line[LINE_MAX];
@@ -1595,18 +1500,54 @@ static int read_config_file(const char *fn, bool ignore_enoent) {
         return r;
 }
 
+static int parse_path_absolute(const struct sd_option *option, char *optarg) {
+        char **data = (char**) option->userdata;
+        char *path;
+
+        if (!optarg)
+                return -EINVAL;
+
+        path = path_make_absolute_cwd(optarg);
+        if (!path)
+                return log_oom();
+        path_kill_slashes(path);
+        if (*data)
+                free(*data);
+
+        *data = path;
+        return 1;
+}
+
 int main(int argc, char *argv[]) {
+        static const struct sd_option options[] = {
+                OPTIONS_BASIC(help),
+                { "create",         0, false, option_set_bool,     &arg_create,       true },
+                { "clean",          0, false, option_set_bool,     &arg_clean,        true },
+                { "remove",         0, false, option_set_bool,     &arg_remove,       true },
+                { "boot",           0, false, option_set_bool,     &arg_boot,         true },
+                { "prefix",         0, true,  option_strv_extend,  &arg_include_prefixes,  },
+                { "exclude-prefix", 0, true,  option_strv_extend,  &arg_exclude_prefixes,  },
+                { "root",           0, true,  parse_path_absolute, &arg_root,              },
+                {}
+        };
+        _cleanup_strv_free_ char **files = NULL;
+        char **args, **f;
         int r, k;
         Item *i;
         Iterator iterator;
 
-        r = parse_argv(argc, argv);
-        if (r <= 0)
-                goto finish;
-
         log_set_target(LOG_TARGET_AUTO);
         log_parse_environment();
         log_open();
+
+        r = option_parse_argv(options, argc, argv, &args);
+        if (r <= 0)
+                return r < 0 ? EXIT_FAILURE : EXIT_SUCCESS;
+
+        if (!arg_clean && !arg_create && !arg_remove) {
+                log_error("You need to specify at least one of --clean, --create or --remove.");
+                return EXIT_FAILURE;
+        }
 
         umask(0022);
 
@@ -1622,30 +1563,19 @@ int main(int argc, char *argv[]) {
 
         r = 0;
 
-        if (optind < argc) {
-                int j;
-
-                for (j = optind; j < argc; j++) {
-                        k = read_config_file(argv[j], false);
-                        if (k < 0 && r == 0)
-                                r = k;
-                }
-
-        } else {
-                _cleanup_strv_free_ char **files = NULL;
-                char **f;
-
+        if (strv_length(args) <= 0) {
                 r = conf_files_list_nulstr(&files, ".conf", arg_root, conf_file_dirs);
                 if (r < 0) {
                         log_error("Failed to enumerate tmpfiles.d files: %s", strerror(-r));
                         goto finish;
                 }
+                args = files;
+        }
 
-                STRV_FOREACH(f, files) {
-                        k = read_config_file(*f, true);
-                        if (k < 0 && r == 0)
-                                r = k;
-                }
+        STRV_FOREACH(f, args) {
+                k = read_config_file(*f, !!files);
+                if (k < 0 && r == 0)
+                        r = k;
         }
 
         HASHMAP_FOREACH(i, globs, iterator)
@@ -1664,8 +1594,8 @@ finish:
         hashmap_free(items);
         hashmap_free(globs);
 
-        free(arg_include_prefixes);
-        free(arg_exclude_prefixes);
+        strv_free(arg_include_prefixes);
+        strv_free(arg_exclude_prefixes);
         free(arg_root);
 
         set_free_free(unix_sockets);

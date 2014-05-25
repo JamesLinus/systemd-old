@@ -24,7 +24,6 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <unistd.h>
-#include <getopt.h>
 #include <string.h>
 #include <ftw.h>
 #include <sys/mman.h>
@@ -35,7 +34,7 @@
 #include "bus-error.h"
 #include "bus-message.h"
 #include "util.h"
-#include "build.h"
+#include "option.h"
 #include "strv.h"
 #include "pager.h"
 #include "set.h"
@@ -47,7 +46,7 @@
 #include "locale-util.h"
 #include "xyzctl.h"
 
-static bool arg_no_pager = false;
+static bool arg_pager = true;
 static bool arg_ask_password = true;
 static BusTransport arg_transport = {BUS_TRANSPORT_LOCAL};
 static bool arg_convert = true;
@@ -483,77 +482,15 @@ static void help(void) {
                , program_invocation_short_name);
 }
 
-static int parse_argv(int argc, char *argv[]) {
-
-        enum {
-                ARG_VERSION = 0x100,
-                ARG_NO_PAGER,
-                ARG_NO_CONVERT,
-                ARG_NO_ASK_PASSWORD
-        };
-
-        static const struct option options[] = {
-                { "help",            no_argument,       NULL, 'h'                 },
-                { "version",         no_argument,       NULL, ARG_VERSION         },
-                { "no-pager",        no_argument,       NULL, ARG_NO_PAGER        },
-                { "host",            required_argument, NULL, 'H'                 },
-                { "machine",         required_argument, NULL, 'M'                 },
-                { "no-ask-password", no_argument,       NULL, ARG_NO_ASK_PASSWORD },
-                { "no-convert",      no_argument,       NULL, ARG_NO_CONVERT      },
+int main(int argc, char*argv[]) {
+        static const struct sd_option options[] = {
+                OPTIONS_BASIC(help),
+                OPTIONS_TRANSPORT_NO_USER(arg_transport),
+                { "no-convert",      0 , false, option_set_bool, &arg_convert,      false },
+                { "no-pager",        0 , false, option_set_bool, &arg_pager,        false },
+                { "no-ask-password", 0 , false, option_set_bool, &arg_ask_password, false },
                 {}
         };
-
-        int c;
-
-        assert(argc >= 0);
-        assert(argv);
-
-        while ((c = getopt_long(argc, argv, "hH:M:", options, NULL)) >= 0)
-
-                switch (c) {
-
-                case 'h':
-                        help();
-                        return 0;
-
-                case ARG_VERSION:
-                        puts(PACKAGE_STRING);
-                        puts(SYSTEMD_FEATURES);
-                        return 0;
-
-                case ARG_NO_CONVERT:
-                        arg_convert = false;
-                        break;
-
-                case ARG_NO_PAGER:
-                        arg_no_pager = true;
-                        break;
-
-                case ARG_NO_ASK_PASSWORD:
-                        arg_ask_password = false;
-                        break;
-
-                case 'H':
-                        arg_transport.type = BUS_TRANSPORT_REMOTE;
-                        arg_transport.host = optarg;
-                        break;
-
-                case 'M':
-                        arg_transport.type = BUS_TRANSPORT_CONTAINER;
-                        arg_transport.host = optarg;
-                        break;
-
-                case '?':
-                        return -EINVAL;
-
-                default:
-                        assert_not_reached("Unhandled option");
-                }
-
-        return 1;
-}
-
-int main(int argc, char*argv[]) {
         static const xyzctl_verb verbs[] = {
                 { "status",                   LESS,  1, show_status,           XYZCTL_BUS                 },
                 { "set-locale",               MORE,  2, set_locale,            XYZCTL_BUS | XYZCTL_POLKIT },
@@ -567,13 +504,14 @@ int main(int argc, char*argv[]) {
                 { "list-x11-keymap-options",  EQUAL, 1, list_x11_keymaps,      XYZCTL_BUS | XYZCTL_PAGER  },
         };
         _cleanup_bus_close_unref_ sd_bus *bus = NULL;
+        char **args;
         int r;
 
         setlocale(LC_ALL, "");
         log_parse_environment();
         log_open();
 
-        r = parse_argv(argc, argv);
+        r = option_parse_argv(options, argc, argv, &args);
         if (r <= 0)
                 goto finish;
 
@@ -581,7 +519,7 @@ int main(int argc, char*argv[]) {
                 arg_ask_password = false;
 
         r = bus_open_transport(&arg_transport, &bus);
-        r = xyzctl_main(verbs, bus, r, argv + optind, &help, arg_ask_password, !arg_no_pager);
+        r = xyzctl_main(verbs, bus, r, args, &help, arg_ask_password, arg_pager);
 
 finish:
         return r < 0 ? EXIT_FAILURE : EXIT_SUCCESS;

@@ -22,12 +22,11 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include <getopt.h>
 #include <errno.h>
 
 #include "machine-id-setup.h"
 #include "log.h"
-#include "build.h"
+#include "option.h"
 
 static const char *arg_root = "";
 
@@ -40,64 +39,18 @@ static void help(void) {
                program_invocation_short_name);
 }
 
-static int parse_argv(int argc, char *argv[]) {
-
-        enum {
-                ARG_VERSION = 0x100,
-                ARG_ROOT,
-        };
-
-        static const struct option options[] = {
-                { "help",      no_argument,       NULL, 'h'           },
-                { "version",   no_argument,       NULL, ARG_VERSION   },
-                { "root",      required_argument, NULL, ARG_ROOT      },
+int main(int argc, char *argv[]) {
+        static const struct sd_option options[] = {
+                OPTIONS_BASIC(help),
+                { "root", 0, true, option_parse_string, &arg_root },
                 {}
         };
-
-        int c;
-
-        assert(argc >= 0);
-        assert(argv);
-
-        while ((c = getopt_long(argc, argv, "hqcv", options, NULL)) >= 0)
-
-                switch (c) {
-
-                case 'h':
-                        help();
-                        return 0;
-
-                case ARG_VERSION:
-                        puts(PACKAGE_STRING);
-                        puts(SYSTEMD_FEATURES);
-                        return 0;
-
-                case ARG_ROOT:
-                        arg_root = optarg;
-                        break;
-
-                case '?':
-                        return -EINVAL;
-
-                default:
-                        assert_not_reached("Unhandled option");
-                }
-
-        if (optind < argc) {
-                log_error("Extraneous arguments");
-                return -EINVAL;
-        }
-
-        return 1;
-}
-
-int main(int argc, char *argv[]) {
         int r;
 
         log_parse_environment();
         log_open();
 
-        r = parse_argv(argc, argv);
+        r = option_parse_argv(options, argc, argv, NULL);
         if (r <= 0)
                 return r < 0 ? EXIT_FAILURE : EXIT_SUCCESS;
 

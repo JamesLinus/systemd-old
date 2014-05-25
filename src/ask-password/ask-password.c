@@ -22,7 +22,6 @@
 #include <sys/socket.h>
 #include <sys/poll.h>
 #include <sys/types.h>
-#include <assert.h>
 #include <string.h>
 #include <errno.h>
 #include <unistd.h>
@@ -30,7 +29,6 @@
 #include <sys/un.h>
 #include <sys/stat.h>
 #include <sys/signalfd.h>
-#include <getopt.h>
 #include <termios.h>
 #include <limits.h>
 #include <stddef.h>
@@ -41,10 +39,10 @@
 #include "strv.h"
 #include "ask-password-api.h"
 #include "def.h"
+#include "option.h"
 
 static const char *arg_icon = NULL;
 static const char *arg_id = NULL;
-static const char *arg_message = NULL;
 static bool arg_echo = false;
 static bool arg_use_tty = true;
 static usec_t arg_timeout = DEFAULT_TIMEOUT_USEC;
@@ -65,110 +63,43 @@ static void help(void) {
                , program_invocation_short_name);
 }
 
-static int parse_argv(int argc, char *argv[]) {
-
-        enum {
-                ARG_ICON = 0x100,
-                ARG_TIMEOUT,
-                ARG_ECHO,
-                ARG_NO_TTY,
-                ARG_ACCEPT_CACHED,
-                ARG_MULTIPLE,
-                ARG_ID
-        };
-
-        static const struct option options[] = {
-                { "help",          no_argument,       NULL, 'h'               },
-                { "icon",          required_argument, NULL, ARG_ICON          },
-                { "timeout",       required_argument, NULL, ARG_TIMEOUT       },
-                { "echo",          no_argument,       NULL, ARG_ECHO          },
-                { "no-tty",        no_argument,       NULL, ARG_NO_TTY        },
-                { "accept-cached", no_argument,       NULL, ARG_ACCEPT_CACHED },
-                { "multiple",      no_argument,       NULL, ARG_MULTIPLE      },
-                { "id",            required_argument, NULL, ARG_ID            },
+int main(int argc, char *argv[]) {
+        static const struct sd_option options[] = {
+                OPTIONS_BASIC(help),
+                { "icon",           0 , true,  option_parse_string, &arg_icon                 },
+                { "timeout",        0 , true,  option_parse_sec,    &arg_timeout              },
+                { "no-tty",         0 , false, option_set_bool,     &arg_use_tty,       false },
+                { "accept-cached",  0 , false, option_set_bool,     &arg_accept_cached, true  },
+                { "multiple",       0 , false, option_set_bool,     &arg_multiple,      true  },
+                { "id",             0 , true,  option_parse_string, &arg_id                   },
+                { "echo",           0 , false, option_set_bool,     &arg_echo,          true  },
                 {}
         };
-
-        int c;
-
-        assert(argc >= 0);
-        assert(argv);
-
-        while ((c = getopt_long(argc, argv, "h", options, NULL)) >= 0)
-
-                switch (c) {
-
-                case 'h':
-                        help();
-                        return 0;
-
-                case ARG_ICON:
-                        arg_icon = optarg;
-                        break;
-
-                case ARG_TIMEOUT:
-                        if (parse_sec(optarg, &arg_timeout) < 0) {
-                                log_error("Failed to parse --timeout parameter %s", optarg);
-                                return -EINVAL;
-                        }
-                        break;
-
-                case ARG_ECHO:
-                        arg_echo = true;
-                        break;
-
-                case ARG_NO_TTY:
-                        arg_use_tty = false;
-                        break;
-
-                case ARG_ACCEPT_CACHED:
-                        arg_accept_cached = true;
-                        break;
-
-                case ARG_MULTIPLE:
-                        arg_multiple = true;
-                        break;
-
-                case ARG_ID:
-                        arg_id = optarg;
-                        break;
-
-                case '?':
-                        return -EINVAL;
-
-                default:
-                        assert_not_reached("Unhandled option");
-                }
-
-        if (optind != argc - 1) {
-                log_error("%s: required argument missing.", program_invocation_short_name);
-                return -EINVAL;
-        }
-
-        arg_message = argv[optind];
-        return 1;
-}
-
-int main(int argc, char *argv[]) {
         int r;
-        usec_t timeout;
+        usec_t timeout = 0;
+        char **args;
 
         log_parse_environment();
         log_open();
 
-        r = parse_argv(argc, argv);
+        r = option_parse_argv(options, argc, argv, &args);
         if (r <= 0)
                 goto finish;
 
+        if (strv_length(args) != 1) {
+                log_error("%s: required argument missing.", program_invocation_short_name);
+                r = -EINVAL;
+                goto finish;
+        }
+
+
         if (arg_timeout > 0)
                 timeout = now(CLOCK_MONOTONIC) + arg_timeout;
-        else
-                timeout = 0;
 
         if (arg_use_tty && isatty(STDIN_FILENO)) {
                 char *password = NULL;
 
-                if ((r = ask_password_tty(arg_message, timeout, arg_echo, NULL, &password)) >= 0) {
+                if ((r = ask_password_tty(args[0], timeout, arg_echo, NULL, &password)) >= 0) {
                         puts(password);
                         free(password);
                 }
@@ -176,7 +107,7 @@ int main(int argc, char *argv[]) {
         } else {
                 char **l;
 
-                if ((r = ask_password_agent(arg_message, arg_icon, arg_id, timeout, arg_echo, arg_accept_cached, &l)) >= 0) {
+                if ((r = ask_password_agent(args[0], arg_icon, arg_id, timeout, arg_echo, arg_accept_cached, &l)) >= 0) {
                         char **p;
 
                         STRV_FOREACH(p, l) {

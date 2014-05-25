@@ -43,7 +43,6 @@
 #include <string.h>
 #include <unistd.h>
 #include <time.h>
-#include <getopt.h>
 #include <limits.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -60,6 +59,7 @@
 #include "svg.h"
 #include "bootchart.h"
 #include "list.h"
+#include "option.h"
 
 double graph_start;
 double log_start;
@@ -95,8 +95,8 @@ double arg_scale_y = DEFAULT_SCALE_Y;
 static struct list_sample_data *sampledata;
 struct list_sample_data *head;
 
-char arg_init_path[PATH_MAX] = DEFAULT_INIT;
-char arg_output_path[PATH_MAX] = DEFAULT_OUTPUT;
+const char *arg_init_path = DEFAULT_INIT;
+const char *arg_output_path = DEFAULT_OUTPUT;
 
 static void signal_handler(int sig) {
         if (sig++)
@@ -107,34 +107,6 @@ static void signal_handler(int sig) {
 #define BOOTCHART_CONF "/etc/systemd/bootchart.conf"
 
 #define BOOTCHART_MAX (16*1024*1024)
-
-static void parse_conf(void) {
-        char *init = NULL, *output = NULL;
-        const ConfigTableItem items[] = {
-                { "Bootchart", "Samples",          config_parse_int,    0, &arg_samples_len },
-                { "Bootchart", "Frequency",        config_parse_double, 0, &arg_hz          },
-                { "Bootchart", "Relative",         config_parse_bool,   0, &arg_relative    },
-                { "Bootchart", "Filter",           config_parse_bool,   0, &arg_filter      },
-                { "Bootchart", "Output",           config_parse_path,   0, &output          },
-                { "Bootchart", "Init",             config_parse_path,   0, &init            },
-                { "Bootchart", "PlotMemoryUsage",  config_parse_bool,   0, &arg_pss         },
-                { "Bootchart", "PlotEntropyGraph", config_parse_bool,   0, &arg_entropy     },
-                { "Bootchart", "ScaleX",           config_parse_double, 0, &arg_scale_x     },
-                { "Bootchart", "ScaleY",           config_parse_double, 0, &arg_scale_y     },
-                { "Bootchart", "ControlGroup",     config_parse_bool,   0, &arg_show_cgroup },
-                { NULL, NULL, NULL, 0, NULL }
-        };
-
-        config_parse(NULL, BOOTCHART_CONF, NULL,
-                     NULL,
-                     config_item_table_lookup, items,
-                     true, false, true, NULL);
-
-        if (init != NULL)
-                strscpy(arg_init_path, sizeof(arg_init_path), init);
-        if (output != NULL)
-                strscpy(arg_output_path, sizeof(arg_output_path), output);
-}
 
 static void help(void) {
         fprintf(stdout,
@@ -161,101 +133,6 @@ static void help(void) {
                 DEFAULT_SCALE_Y,
                 DEFAULT_OUTPUT,
                 DEFAULT_INIT);
-}
-
-static int parse_argv(int argc, char *argv[]) {
-        static const struct option options[] = {
-                {"rel",           no_argument,        NULL,  'r'},
-                {"freq",          required_argument,  NULL,  'f'},
-                {"samples",       required_argument,  NULL,  'n'},
-                {"pss",           no_argument,        NULL,  'p'},
-                {"output",        required_argument,  NULL,  'o'},
-                {"init",          required_argument,  NULL,  'i'},
-                {"no-filter",     no_argument,        NULL,  'F'},
-                {"cmdline",       no_argument,        NULL,  'C'},
-                {"control-group", no_argument,        NULL,  'c'},
-                {"help",          no_argument,        NULL,  'h'},
-                {"scale-x",       required_argument,  NULL,  'x'},
-                {"scale-y",       required_argument,  NULL,  'y'},
-                {"entropy",       no_argument,        NULL,  'e'},
-                {}
-        };
-        int c, r;
-
-        if (getpid() == 1)
-                opterr = 0;
-
-        while ((c = getopt_long(argc, argv, "erpf:n:o:i:FCchx:y:", options, NULL)) >= 0)
-                switch (c) {
-
-                case 'r':
-                        arg_relative = true;
-                        break;
-                case 'f':
-                        r = safe_atod(optarg, &arg_hz);
-                        if (r < 0)
-                                log_warning("failed to parse --freq/-f argument '%s': %s",
-                                            optarg, strerror(-r));
-                        break;
-                case 'F':
-                        arg_filter = false;
-                        break;
-                case 'C':
-                        arg_show_cmdline = true;
-                        break;
-                case 'c':
-                        arg_show_cgroup = true;
-                        break;
-                case 'n':
-                        r = safe_atoi(optarg, &arg_samples_len);
-                        if (r < 0)
-                                log_warning("failed to parse --samples/-n argument '%s': %s",
-                                            optarg, strerror(-r));
-                        break;
-                case 'o':
-                        path_kill_slashes(optarg);
-                        strscpy(arg_output_path, sizeof(arg_output_path), optarg);
-                        break;
-                case 'i':
-                        path_kill_slashes(optarg);
-                        strscpy(arg_init_path, sizeof(arg_init_path), optarg);
-                        break;
-                case 'p':
-                        arg_pss = true;
-                        break;
-                case 'x':
-                        r = safe_atod(optarg, &arg_scale_x);
-                        if (r < 0)
-                                log_warning("failed to parse --scale-x/-x argument '%s': %s",
-                                            optarg, strerror(-r));
-                        break;
-                case 'y':
-                        r = safe_atod(optarg, &arg_scale_y);
-                        if (r < 0)
-                                log_warning("failed to parse --scale-y/-y argument '%s': %s",
-                                            optarg, strerror(-r));
-                        break;
-                case 'e':
-                        arg_entropy = true;
-                        break;
-                case 'h':
-                        help();
-                        return 0;
-                case '?':
-                        if (getpid() != 1)
-                                return -EINVAL;
-                        else
-                                return 0;
-                default:
-                        assert_not_reached("Unhandled option code.");
-                }
-
-        if (arg_hz <= 0) {
-                log_error("Frequency needs to be > 0");
-                return -EINVAL;
-        }
-
-        return 1;
 }
 
 static void do_journal_append(char *file) {
@@ -306,6 +183,36 @@ static void do_journal_append(char *file) {
 }
 
 int main(int argc, char *argv[]) {
+        static const ConfigTableItem items[] = {
+                { "Bootchart", "Samples",          config_parse_int,    0, &arg_samples_len },
+                { "Bootchart", "Frequency",        config_parse_double, 0, &arg_hz          },
+                { "Bootchart", "Relative",         config_parse_bool,   0, &arg_relative    },
+                { "Bootchart", "Filter",           config_parse_bool,   0, &arg_filter      },
+                { "Bootchart", "Output",           config_parse_path,   0, &arg_output_path },
+                { "Bootchart", "Init",             config_parse_path,   0, &arg_init_path   },
+                { "Bootchart", "PlotMemoryUsage",  config_parse_bool,   0, &arg_pss         },
+                { "Bootchart", "PlotEntropyGraph", config_parse_bool,   0, &arg_entropy     },
+                { "Bootchart", "ScaleX",           config_parse_double, 0, &arg_scale_x     },
+                { "Bootchart", "ScaleY",           config_parse_double, 0, &arg_scale_y     },
+                { "Bootchart", "ControlGroup",     config_parse_bool,   0, &arg_show_cgroup },
+                {}
+        };
+        static const struct sd_option options[] = {
+                OPTIONS_BASIC(help),
+                { "rel",           'r', false, option_set_bool,     &arg_relative,     true  },
+                { "freq",          'f', true,  option_parse_double, &arg_hz,                 },
+                { "samples",       'n', true,  option_parse_int,    &arg_samples_len,        },
+                { "scale-x",       'x', true,  option_parse_double, &arg_scale_x,            },
+                { "scale-y",       'y', true,  option_parse_double, &arg_scale_y,            },
+                { "pss",           'p', false, option_set_bool,     &arg_pss,          true  },
+                { "entropy",       'e', false, option_set_bool,     &arg_entropy,      true  },
+                { "output",        'o', true,  option_parse_path,   &arg_output_path,        },
+                { "init",          'i', true,  option_parse_path,   &arg_init_path,          },
+                { "no-filter",     'F', false, option_set_bool,     &arg_filter,       false },
+                { "cmdline",       'C', false, option_set_bool,     &arg_show_cmdline, true  },
+                { "control-group", 'c', false, option_set_bool,     &arg_show_cgroup,  true  },
+                {}
+        };
         _cleanup_free_ char *build = NULL;
         struct sigaction sig = {
                 .sa_handler = signal_handler,
@@ -318,11 +225,21 @@ int main(int argc, char *argv[]) {
         struct rlimit rlim;
         bool has_procfs = false;
 
-        parse_conf();
+        r = config_parse(NULL, BOOTCHART_CONF, NULL,
+                         NULL,
+                         config_item_table_lookup, items,
+                         true, false, true, NULL);
+        if (r < 0)
+                log_warning("Failed to parse configuration file: %s", strerror(-r));
 
-        r = parse_argv(argc, argv);
+        r = option_parse_argv(options, argc, argv, NULL);
         if (r <= 0)
                 return r == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+
+        if (arg_hz <= 0.0) {
+                fprintf(stderr, "Error: Frequency needs to be > 0\n");
+                return EXIT_FAILURE;
+        }
 
         /*
          * If the kernel executed us through init=/usr/lib/systemd/systemd-bootchart, then

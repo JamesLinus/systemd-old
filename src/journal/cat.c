@@ -20,7 +20,6 @@
 ***/
 
 #include <stdio.h>
-#include <getopt.h>
 #include <assert.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -30,7 +29,8 @@
 #include "systemd/sd-journal.h"
 
 #include "util.h"
-#include "build.h"
+#include "option.h"
+#include "strv.h"
 
 static char *arg_identifier = NULL;
 static int arg_priority = LOG_INFO;
@@ -47,88 +47,21 @@ static void help(void) {
                , program_invocation_short_name);
 }
 
-static int parse_argv(int argc, char *argv[]) {
-
-        enum {
-                ARG_VERSION = 0x100,
-                ARG_LEVEL_PREFIX
-        };
-
-        static const struct option options[] = {
-                { "help",         no_argument,       NULL, 'h'              },
-                { "version",      no_argument,       NULL, ARG_VERSION      },
-                { "identifier",   required_argument, NULL, 't'              },
-                { "priority",     required_argument, NULL, 'p'              },
-                { "level-prefix", required_argument, NULL, ARG_LEVEL_PREFIX },
+int main(int argc, char *argv[]) {
+        static const struct sd_option options[] = {
+                OPTIONS_BASIC(help),
+                { "identifier",   't', true, option_parse_string,    &arg_identifier   },
+                { "priority",     'p', true, option_parse_log_level, &arg_priority     },
+                { "level-prefix",  0 , true, option_parse_bool,      &arg_level_prefix },
                 {}
         };
-
-        int c;
-
-        assert(argc >= 0);
-        assert(argv);
-
-        while ((c = getopt_long(argc, argv, "+ht:p:", options, NULL)) >= 0)
-
-                switch (c) {
-
-                case 'h':
-                        help();
-                        return 0;
-
-                case ARG_VERSION:
-                        puts(PACKAGE_STRING);
-                        puts(SYSTEMD_FEATURES);
-                        return 0;
-
-                case 't':
-                        free(arg_identifier);
-                        if (isempty(optarg))
-                                arg_identifier = NULL;
-                        else {
-                                arg_identifier = strdup(optarg);
-                                if (!arg_identifier)
-                                        return log_oom();
-                        }
-                        break;
-
-                case 'p':
-                        arg_priority = log_level_from_string(optarg);
-                        if (arg_priority < 0) {
-                                log_error("Failed to parse priority value.");
-                                return arg_priority;
-                        }
-                        break;
-
-                case ARG_LEVEL_PREFIX: {
-                        int k;
-
-                        k = parse_boolean(optarg);
-                        if (k < 0) {
-                                log_error("Failed to parse level prefix value.");
-                                return k;
-                        }
-                        arg_level_prefix = k;
-                        break;
-                }
-
-                case '?':
-                        return -EINVAL;
-
-                default:
-                        assert_not_reached("Unhandled option");
-                }
-
-        return 1;
-}
-
-int main(int argc, char *argv[]) {
+        char **args;
         int r, fd = -1, saved_stderr = -1;
 
         log_parse_environment();
         log_open();
 
-        r = parse_argv(argc, argv);
+        r = option_parse_argv(options, argc, argv, &args);
         if (r <= 0)
                 goto finish;
 
@@ -153,10 +86,10 @@ int main(int argc, char *argv[]) {
 
         fd = -1;
 
-        if (argc <= optind)
-                execl("/bin/cat", "/bin/cat", NULL);
+        if (strv_length(args) > 0)
+                execvp(args[0], args);
         else
-                execvp(argv[optind], argv + optind);
+                execl("/bin/cat", "/bin/cat", NULL);
 
         r = -errno;
 

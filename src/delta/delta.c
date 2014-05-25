@@ -24,7 +24,6 @@
 #include <assert.h>
 #include <string.h>
 #include <unistd.h>
-#include <getopt.h>
 
 #include "hashmap.h"
 #include "util.h"
@@ -33,6 +32,7 @@
 #include "pager.h"
 #include "build.h"
 #include "strv.h"
+#include "option.h"
 
 static const char prefixes[] =
         "/etc\0"
@@ -62,7 +62,7 @@ static const char have_dropins[] =
         "systemd/system\0"
         "systemd/user\0";
 
-static bool arg_no_pager = false;
+static bool arg_pager = true;
 static int arg_diff = -1;
 
 static enum {
@@ -79,10 +79,8 @@ static enum {
 
 static void pager_open_if_enabled(void) {
 
-        if (arg_no_pager)
-                return;
-
-        pager_open(false);
+        if (arg_pager)
+                pager_open(false);
 }
 
 static int equivalent(const char *a, const char *b) {
@@ -483,7 +481,8 @@ static void help(void) {
                , program_invocation_short_name);
 }
 
-static int parse_flags(const char *flag_str, int flags) {
+static int parse_flags(const struct sd_option *option, char *flag_str) {
+        int flags = *((int*)option->userdata);
         const char *word, *state;
         size_t l;
 
@@ -502,97 +501,32 @@ static int parse_flags(const char *flag_str, int flags) {
                         flags |= SHOW_EXTENDED;
                 else if (strneq("default", word, l))
                         flags |= SHOW_DEFAULTS;
-                else
+                else {
+                        log_error("Failed to parse flags field.");
                         return -EINVAL;
+                }
         }
-        return flags;
-}
 
-static int parse_argv(int argc, char *argv[]) {
-
-        enum {
-                ARG_NO_PAGER = 0x100,
-                ARG_DIFF,
-                ARG_VERSION
-        };
-
-        static const struct option options[] = {
-                { "help",      no_argument,       NULL, 'h'          },
-                { "version",   no_argument,       NULL, ARG_VERSION  },
-                { "no-pager",  no_argument,       NULL, ARG_NO_PAGER },
-                { "diff",      optional_argument, NULL, ARG_DIFF     },
-                { "type",      required_argument, NULL, 't'          },
-                {}
-        };
-
-        int c;
-
-        assert(argc >= 1);
-        assert(argv);
-
-        while ((c = getopt_long(argc, argv, "ht:", options, NULL)) >= 0)
-
-                switch (c) {
-
-                case 'h':
-                        help();
-                        return 0;
-
-                case ARG_VERSION:
-                        puts(PACKAGE_STRING);
-                        puts(SYSTEMD_FEATURES);
-                        return 0;
-
-                case ARG_NO_PAGER:
-                        arg_no_pager = true;
-                        break;
-
-                case 't': {
-                        int f;
-                        f = parse_flags(optarg, arg_flags);
-                        if (f < 0) {
-                                log_error("Failed to parse flags field.");
-                                return -EINVAL;
-                        }
-                        arg_flags = f;
-                        break;
-                }
-
-                case ARG_DIFF:
-                        if (!optarg)
-                                arg_diff = 1;
-                        else {
-                                int b;
-
-                                b = parse_boolean(optarg);
-                                if (b < 0) {
-                                        log_error("Failed to parse diff boolean.");
-                                        return -EINVAL;
-                                } else if (b)
-                                        arg_diff = 1;
-                                else
-                                        arg_diff = 0;
-                        }
-                        break;
-
-                case '?':
-                        return -EINVAL;
-
-                default:
-                        assert_not_reached("Unhandled option");
-                }
-
+        *((int*)option->userdata) = flags;
         return 1;
 }
 
 int main(int argc, char *argv[]) {
+        static const struct sd_option options[] = {
+                OPTIONS_BASIC(help),
+                { "no-pager",  0 , false, option_set_bool,   &arg_pager, false },
+                { "diff",      0 , true,  option_parse_bool, &arg_diff         },
+                { "type",     't', false, parse_flags,       &arg_flags        },
+                {}
+        };
+        char **args;
         int r = 0, k;
         int n_found = 0;
 
         log_parse_environment();
         log_open();
 
-        r = parse_argv(argc, argv);
+        r = option_parse_argv(options, argc, argv, &args);
         if (r <= 0)
                 goto finish;
 
@@ -606,12 +540,12 @@ int main(int argc, char *argv[]) {
 
         pager_open_if_enabled();
 
-        if (optind < argc) {
-                int i;
+        if (strv_length(argv) > 0) {
+                char **path;
 
-                for (i = optind; i < argc; i++) {
-                        path_kill_slashes(argv[i]);
-                        k = process_suffix_chop(argv[i]);
+                STRV_FOREACH(path, args) {
+                        path_kill_slashes(*path);
+                        k = process_suffix_chop(*path);
                         if (k < 0)
                                 r = k;
                         else
