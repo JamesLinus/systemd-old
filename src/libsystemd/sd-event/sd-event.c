@@ -2589,11 +2589,12 @@ _public_ int sd_event_default(sd_event **ret) {
         if (!ret)
                 return !!default_event;
 
-        if (default_event) {
+        if (default_event && !event_pid_changed(default_event)) {
                 *ret = sd_event_ref(default_event);
                 return 0;
         }
 
+        default_event = sd_event_unref(default_event);
         r = sd_event_new(&e);
         if (r < 0)
                 return r;
