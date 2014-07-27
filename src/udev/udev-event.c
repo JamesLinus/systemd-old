@@ -33,6 +33,8 @@
 
 #include "udev.h"
 #include "rtnl-util.h"
+#include "sd-event.h"
+#include "event-util.h"
 
 struct udev_event *udev_event_new(struct udev_device *dev) {
         struct udev *udev = udev_device_get_udev(dev);
@@ -414,261 +416,140 @@ static int spawn_exec(struct udev_event *event,
         return -errno;
 }
 
-static void spawn_read(struct udev_event *event,
-                       usec_t timeout_usec,
-                       const char *cmd,
-                       int fd_stdout, int fd_stderr,
-                       char *result, size_t ressize) {
-        _cleanup_close_ int fd_ep = -1;
-        struct epoll_event ep_outpipe = {
-                .events = EPOLLIN,
-                .data.ptr = &fd_stdout,
-        };
-        struct epoll_event ep_errpipe = {
-                .events = EPOLLIN,
-                .data.ptr = &fd_stderr,
-        };
-        size_t respos = 0;
+struct spawn_info {
+        struct udev_event *event;
+        pid_t pid;
+        const char *cmd;
+        int fd_stdout;
+        int fd_stderr;
+        size_t ressize;
+        size_t respos;
+        char *result;
+};
+
+static int spawn_handle_io(sd_event_source *s, int fd, uint32_t revents, void *userdata) {
+        struct spawn_info *info = (struct spawn_info*) userdata;
+        ssize_t count;
+        char buf[4096];
+
+        if (revents & EPOLLHUP)
+                sd_event_source_set_enabled(s, false);
+
+        count = read(fd, buf, sizeof(buf)-1);
+        if (count <= 0)
+                return 0;
+        buf[count] = '\0';
+
+        /* store stdout result */
+        if (info->result && fd == info->fd_stdout) {
+                char *pos, *line;
+                if (info->respos + count < info->ressize) {
+                        memcpy(&(info->result[info->respos]), buf, count);
+                        info->respos += count;
+                } else
+                        log_error("'%s' ressize %zd too short", info->cmd, info->ressize);
+                pos = buf;
+                while ((line = strsep(&pos, "\n"))) {
+                        if (pos != NULL || line[0] != '\0')
+                                log_debug("'%s'(%s) '%s'", info->cmd, fd == info->fd_stdout ? "out" : "err" , line);
+                }
+        }
+        return 0;
+}
+
+static int spawn_handle_sigchld(sd_event_source *s, const siginfo_t *si, void *userdata) {
+        struct spawn_info *info = (struct spawn_info*) userdata;
+        int err = 0;
+
+        switch(si->si_code) {
+        case CLD_EXITED:
+                log_debug("'%s' [%u] exit with return code %i", info->cmd, info->pid, si->si_status);
+                if (si->si_status != 0)
+                        err = -1;
+                break;
+        case CLD_KILLED:
+        case CLD_DUMPED:
+                log_error("'%s' [%u] terminated by signal %i (%s)", info->cmd, info->pid, si->si_status, strsignal(si->si_status));
+                err = -1;
+        default:
+                return 0;
+        }
+        return sd_event_exit(sd_event_source_get_event(s), err);
+}
+
+static int spawn_handle_timeout(sd_event_source *s, uint64_t usec, void *userdata) {
+        struct spawn_info *info = (struct spawn_info*) userdata;
+
+        log_error("timeout: killing '%s' [%u]", info->cmd, info->pid);
+        kill(info->pid, SIGKILL);
+        return sd_event_exit(sd_event_source_get_event(s), -ETIMEDOUT);
+}
+
+static int spawn_handle_timeout_warn(sd_event_source *s, uint64_t usec, void *userdata) {
+        struct spawn_info *info = (struct spawn_info*) userdata;
+
+        log_warning("slow: '%s' [%u]", info->cmd, info->pid);
+        return 0;
+}
+
+static int spawn_read_wait(struct udev_event *event,
+                      usec_t timeout_usec,
+                      usec_t timeout_warn_usec,
+                      const char *cmd, pid_t pid,
+                      int fd_stdout, int fd_stderr,
+                      char *result, size_t ressize) {
+        _cleanup_event_unref_ sd_event *e = NULL;
+        _cleanup_event_source_unref_ sd_event_source *sigchld_source = NULL;
+        struct spawn_info info = {event, pid, cmd, fd_stdout, fd_stderr, ressize, 0, result};
         int r;
 
-        /* read from child if requested */
-        if (fd_stdout < 0 && fd_stderr < 0)
-                return;
+        r = sd_event_new(&e);
+        if (r < 0)
+                goto err;
 
-        fd_ep = epoll_create1(EPOLL_CLOEXEC);
-        if (fd_ep < 0) {
-                log_error("error creating epoll fd: %m");
-                return;
+        r = sd_event_add_child(e, &sigchld_source, pid, WEXITED, spawn_handle_sigchld, &info);
+        if (r < 0)
+                goto err;
+
+        //process io before sigchld
+        r = sd_event_source_set_priority(sigchld_source, SD_EVENT_PRIORITY_IDLE);
+        if (r < 0)
+                goto err;
+
+        if (timeout_usec > 0) {
+                uint64_t timeout = event->birth_usec + timeout_usec;
+                r = sd_event_add_time(e, NULL, CLOCK_MONOTONIC, timeout, 0, spawn_handle_timeout, &info);
+                if (r < 0)
+                        goto err;
+        }
+
+        if (timeout_warn_usec > 0) {
+                uint64_t timeout = event->birth_usec + timeout_warn_usec;
+                r = sd_event_add_time(e, NULL, CLOCK_MONOTONIC, timeout, 0, spawn_handle_timeout_warn, &info);
+                if (r < 0)
+                        goto err;
         }
 
         if (fd_stdout >= 0) {
-                r = epoll_ctl(fd_ep, EPOLL_CTL_ADD, fd_stdout, &ep_outpipe);
-                if (r < 0) {
-                        log_error("fail to add stdout fd to epoll: %m");
-                        return;
-                }
+                r = sd_event_add_io(e, NULL, fd_stdout, EPOLLIN, spawn_handle_io, &info);
+                if (r < 0)
+                        goto err;
         }
-
         if (fd_stderr >= 0) {
-                r = epoll_ctl(fd_ep, EPOLL_CTL_ADD, fd_stderr, &ep_errpipe);
-                if (r < 0) {
-                        log_error("fail to add stderr fd to epoll: %m");
-                        return;
-                }
+                r = sd_event_add_io(e, NULL, fd_stderr, EPOLLIN, spawn_handle_io, &info);
+                if (r < 0)
+                        goto err;
         }
 
-        /* read child output */
-        while (fd_stdout >= 0 || fd_stderr >= 0) {
-                int timeout;
-                int fdcount;
-                struct epoll_event ev[4];
-                int i;
+        r = sd_event_loop(e);
 
-                if (timeout_usec > 0) {
-                        usec_t age_usec;
+        if (info.result != NULL)
+                info.result[info.respos] = '\0';
 
-                        age_usec = now(CLOCK_MONOTONIC) - event->birth_usec;
-                        if (age_usec >= timeout_usec) {
-                                log_error("timeout '%s'", cmd);
-                                return;
-                        }
-                        timeout = ((timeout_usec - age_usec) / USEC_PER_MSEC) + MSEC_PER_SEC;
-                } else {
-                        timeout = -1;
-                }
-
-                fdcount = epoll_wait(fd_ep, ev, ELEMENTSOF(ev), timeout);
-                if (fdcount < 0) {
-                        if (errno == EINTR)
-                                continue;
-                        log_error("failed to poll: %m");
-                        return;
-                } else if (fdcount == 0) {
-                        log_error("timeout '%s'", cmd);
-                        return;
-                }
-
-                for (i = 0; i < fdcount; i++) {
-                        int *fd = (int *)ev[i].data.ptr;
-
-                        if (*fd < 0)
-                                continue;
-
-                        if (ev[i].events & EPOLLIN) {
-                                ssize_t count;
-                                char buf[4096];
-
-                                count = read(*fd, buf, sizeof(buf)-1);
-                                if (count <= 0)
-                                        continue;
-                                buf[count] = '\0';
-
-                                /* store stdout result */
-                                if (result != NULL && *fd == fd_stdout) {
-                                        if (respos + count < ressize) {
-                                                memcpy(&result[respos], buf, count);
-                                                respos += count;
-                                        } else {
-                                                log_error("'%s' ressize %zd too short", cmd, ressize);
-                                        }
-                                }
-
-                                /* log debug output only if we watch stderr */
-                                if (fd_stderr >= 0) {
-                                        char *pos;
-                                        char *line;
-
-                                        pos = buf;
-                                        while ((line = strsep(&pos, "\n"))) {
-                                                if (pos != NULL || line[0] != '\0')
-                                                        log_debug("'%s'(%s) '%s'", cmd, *fd == fd_stdout ? "out" : "err" , line);
-                                        }
-                                }
-                        } else if (ev[i].events & EPOLLHUP) {
-                                r = epoll_ctl(fd_ep, EPOLL_CTL_DEL, *fd, NULL);
-                                if (r < 0) {
-                                        log_error("failed to remove fd from epoll: %m");
-                                        return;
-                                }
-                                *fd = -1;
-                        }
-                }
-        }
-
-        /* return the child's stdout string */
-        if (result != NULL)
-                result[respos] = '\0';
-}
-
-static int spawn_wait(struct udev_event *event,
-                      usec_t timeout_usec,
-                      usec_t timeout_warn_usec,
-                      const char *cmd, pid_t pid) {
-        struct pollfd pfd[1];
-        int err = 0;
-
-        pfd[0].events = POLLIN;
-        pfd[0].fd = event->fd_signal;
-
-        while (pid > 0) {
-                int timeout;
-                int timeout_warn = 0;
-                int fdcount;
-
-                if (timeout_usec > 0) {
-                        usec_t age_usec;
-
-                        age_usec = now(CLOCK_MONOTONIC) - event->birth_usec;
-                        if (age_usec >= timeout_usec)
-                                timeout = 1000;
-                        else {
-                                if (timeout_warn_usec > 0)
-                                        timeout_warn = ((timeout_warn_usec - age_usec) / USEC_PER_MSEC) + MSEC_PER_SEC;
-
-                                timeout = ((timeout_usec - timeout_warn_usec - age_usec) / USEC_PER_MSEC) + MSEC_PER_SEC;
-                        }
-                } else {
-                        timeout = -1;
-                }
-
-                fdcount = poll(pfd, 1, timeout_warn);
-                if (fdcount < 0) {
-                        if (errno == EINTR)
-                                continue;
-                        err = -errno;
-                        log_error("failed to poll: %m");
-                        goto out;
-                }
-                if (fdcount == 0) {
-                        log_warning("slow: '%s' [%u]", cmd, pid);
-
-                        fdcount = poll(pfd, 1, timeout);
-                        if (fdcount < 0) {
-                                if (errno == EINTR)
-                                        continue;
-                                err = -errno;
-                                log_error("failed to poll: %m");
-                                goto out;
-                        }
-                        if (fdcount == 0) {
-                                log_error("timeout: killing '%s' [%u]", cmd, pid);
-                                kill(pid, SIGKILL);
-                        }
-                }
-
-                if (pfd[0].revents & POLLIN) {
-                        struct signalfd_siginfo fdsi;
-                        int status;
-                        ssize_t size;
-
-                        size = read(event->fd_signal, &fdsi, sizeof(struct signalfd_siginfo));
-                        if (size != sizeof(struct signalfd_siginfo))
-                                continue;
-
-                        switch (fdsi.ssi_signo) {
-                        case SIGTERM:
-                                event->sigterm = true;
-                                break;
-                        case SIGCHLD:
-                                if (waitpid(pid, &status, WNOHANG) < 0)
-                                        break;
-                                if (WIFEXITED(status)) {
-                                        log_debug("'%s' [%u] exit with return code %i", cmd, pid, WEXITSTATUS(status));
-                                        if (WEXITSTATUS(status) != 0)
-                                                err = -1;
-                                } else if (WIFSIGNALED(status)) {
-                                        log_error("'%s' [%u] terminated by signal %i (%s)", cmd, pid, WTERMSIG(status), strsignal(WTERMSIG(status)));
-                                        err = -1;
-                                } else if (WIFSTOPPED(status)) {
-                                        log_error("'%s' [%u] stopped", cmd, pid);
-                                        err = -1;
-                                } else if (WIFCONTINUED(status)) {
-                                        log_error("'%s' [%u] continued", cmd, pid);
-                                        err = -1;
-                                } else {
-                                        log_error("'%s' [%u] exit with status 0x%04x", cmd, pid, status);
-                                        err = -1;
-                                }
-                                pid = 0;
-                                break;
-                        }
-                }
-        }
-out:
-        return err;
-}
-
-int udev_build_argv(struct udev *udev, char *cmd, int *argc, char *argv[]) {
-        int i = 0;
-        char *pos;
-
-        if (strchr(cmd, ' ') == NULL) {
-                argv[i++] = cmd;
-                goto out;
-        }
-
-        pos = cmd;
-        while (pos != NULL && pos[0] != '\0') {
-                if (pos[0] == '\'') {
-                        /* do not separate quotes */
-                        pos++;
-                        argv[i] = strsep(&pos, "\'");
-                        if (pos != NULL)
-                                while (pos[0] == ' ')
-                                        pos++;
-                } else {
-                        argv[i] = strsep(&pos, " ");
-                        if (pos != NULL)
-                                while (pos[0] == ' ')
-                                        pos++;
-                }
-                i++;
-        }
-out:
-        argv[i] = NULL;
-        if (argc)
-                *argc = i;
-        return 0;
+        return r;
+err:
+        log_error("failed to set up event loop: %s", strerror(-r));
+        return r;
 }
 
 int udev_event_spawn(struct udev_event *event,
@@ -677,36 +558,38 @@ int udev_event_spawn(struct udev_event *event,
                      const char *cmd, char **envp, const sigset_t *sigmask,
                      char *result, size_t ressize) {
         struct udev *udev = event->udev;
-        int outpipe[2] = {-1, -1};
-        int errpipe[2] = {-1, -1};
+        _cleanup_close_pair_ int outpipe[2] = {-1, -1};
+        _cleanup_close_pair_ int errpipe[2] = {-1, -1};
         pid_t pid;
-        char arg[UTIL_PATH_SIZE];
-        char *argv[128];
-        char program[UTIL_PATH_SIZE];
+        _cleanup_strv_free_ char **argv = NULL;
         int err = 0;
 
-        strscpy(arg, sizeof(arg), cmd);
-        udev_build_argv(event->udev, arg, NULL, argv);
+        err = strv_split_quoted(&argv, cmd);
+        if (err < 0)
+                return err;
 
         /* pipes from child to parent */
         if (result != NULL || udev_get_log_priority(udev) >= LOG_INFO) {
                 if (pipe2(outpipe, O_NONBLOCK) != 0) {
-                        err = -errno;
                         log_error("pipe failed: %m");
-                        goto out;
+                        return -errno;
                 }
         }
         if (udev_get_log_priority(udev) >= LOG_INFO) {
                 if (pipe2(errpipe, O_NONBLOCK) != 0) {
-                        err = -errno;
                         log_error("pipe failed: %m");
-                        goto out;
+                        return -errno;
                 }
         }
 
         /* allow programs in /usr/lib/udev/ to be called without the path */
         if (argv[0][0] != '/') {
-                strscpyl(program, sizeof(program), UDEVLIBEXECDIR "/", argv[0], NULL);
+                char *program;
+                program = strappend(UDEVLIBEXECDIR "/", argv[0]);
+                if (!program)
+                        return -ENOMEM;
+
+                free(argv[0]);
                 argv[0] = program;
         }
 
@@ -714,54 +597,31 @@ int udev_event_spawn(struct udev_event *event,
         switch(pid) {
         case 0:
                 /* child closes parent's ends of pipes */
-                if (outpipe[READ_END] >= 0) {
-                        close(outpipe[READ_END]);
-                        outpipe[READ_END] = -1;
-                }
-                if (errpipe[READ_END] >= 0) {
-                        close(errpipe[READ_END]);
-                        errpipe[READ_END] = -1;
-                }
+                outpipe[READ_END] = safe_close(outpipe[READ_END]);
+                errpipe[READ_END] = safe_close(errpipe[READ_END]);
 
                 log_debug("starting '%s'", cmd);
 
                 spawn_exec(event, cmd, argv, envp, sigmask,
                            outpipe[WRITE_END], errpipe[WRITE_END]);
 
-                _exit(2 );
+                _exit(2);
         case -1:
                 log_error("fork of '%s' failed: %m", cmd);
                 err = -1;
-                goto out;
+                break;
         default:
                 /* parent closed child's ends of pipes */
-                if (outpipe[WRITE_END] >= 0) {
-                        close(outpipe[WRITE_END]);
-                        outpipe[WRITE_END] = -1;
-                }
-                if (errpipe[WRITE_END] >= 0) {
-                        close(errpipe[WRITE_END]);
-                        errpipe[WRITE_END] = -1;
-                }
+                outpipe[WRITE_END] = safe_close(outpipe[WRITE_END]);
+                errpipe[WRITE_END] = safe_close(errpipe[WRITE_END]);
 
-                spawn_read(event,
-                           timeout_usec,
-                           cmd,
-                           outpipe[READ_END], errpipe[READ_END],
-                           result, ressize);
-
-                err = spawn_wait(event, timeout_usec, timeout_warn_usec, cmd, pid);
+                err = spawn_read_wait(event,
+                                      timeout_usec, timeout_warn_usec,
+                                      cmd, pid,
+                                      outpipe[READ_END], errpipe[READ_END],
+                                      result, ressize);
         }
 
-out:
-        if (outpipe[READ_END] >= 0)
-                close(outpipe[READ_END]);
-        if (outpipe[WRITE_END] >= 0)
-                close(outpipe[WRITE_END]);
-        if (errpipe[READ_END] >= 0)
-                close(errpipe[READ_END]);
-        if (errpipe[WRITE_END] >= 0)
-                close(errpipe[WRITE_END]);
         return err;
 }
 
