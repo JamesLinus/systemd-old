@@ -91,7 +91,6 @@ int udev_event_spawn(struct udev_event *event,
 void udev_event_execute_rules(struct udev_event *event, usec_t timeout_usec, usec_t timeout_warn_usec,
                               struct udev_rules *rules, const sigset_t *sigset);
 void udev_event_execute_run(struct udev_event *event, usec_t timeout_usec, usec_t timeout_warn_usec, const sigset_t *sigset);
-int udev_build_argv(struct udev *udev, char *cmd, int *argc, char *argv[]);
 
 /* udev-watch.c */
 int udev_watch_init(struct udev *udev);
