@@ -48,45 +48,6 @@ struct udev_list_entry {
         int num;
 };
 
-/* the list's head points to itself if empty */
-void udev_list_node_init(struct udev_list_node *list)
-{
-        list->next = list;
-        list->prev = list;
-}
-
-int udev_list_node_is_empty(struct udev_list_node *list)
-{
-        return list->next == list;
-}
-
-static void udev_list_node_insert_between(struct udev_list_node *new,
-                                          struct udev_list_node *prev,
-                                          struct udev_list_node *next)
-{
-        next->prev = new;
-        new->next = next;
-        new->prev = prev;
-        prev->next = new;
-}
-
-void udev_list_node_append(struct udev_list_node *new, struct udev_list_node *list)
-{
-        udev_list_node_insert_between(new, list->prev, list);
-}
-
-void udev_list_node_remove(struct udev_list_node *entry)
-{
-        struct udev_list_node *prev = entry->prev;
-        struct udev_list_node *next = entry->next;
-
-        next->prev = prev;
-        prev->next = next;
-
-        entry->prev = NULL;
-        entry->next = NULL;
-}
-
 void udev_list_init(struct udev *udev, struct udev_list *list, bool unique)
 {
         memzero(list, sizeof(struct udev_list));

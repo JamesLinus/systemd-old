@@ -101,9 +101,6 @@ int udev_monitor_send_device(struct udev_monitor *udev_monitor,
 struct udev_monitor *udev_monitor_new_from_netlink_fd(struct udev *udev, const char *name, int fd);
 
 /* libudev-list.c */
-struct udev_list_node {
-        struct udev_list_node *next, *prev;
-};
 struct udev_list {
         struct udev *udev;
         LIST_HEAD(struct udev_list_entry, head);
@@ -112,19 +109,6 @@ struct udev_list {
         unsigned int entries_max;
         bool unique;
 };
-#define UDEV_LIST(list) struct udev_list_node list = { &(list), &(list) }
-void udev_list_node_init(struct udev_list_node *list);
-int udev_list_node_is_empty(struct udev_list_node *list);
-void udev_list_node_append(struct udev_list_node *new, struct udev_list_node *list);
-void udev_list_node_remove(struct udev_list_node *entry);
-#define udev_list_node_foreach(node, list) \
-        for (node = (list)->next; \
-             node != list; \
-             node = (node)->next)
-#define udev_list_node_foreach_safe(node, tmp, list) \
-        for (node = (list)->next, tmp = (node)->next; \
-             node != list; \
-             node = tmp, tmp = (tmp)->next)
 void udev_list_init(struct udev *udev, struct udev_list *list, bool unique);
 void udev_list_cleanup(struct udev_list *list);
 struct udev_list_entry *udev_list_get_entry(struct udev_list *list);

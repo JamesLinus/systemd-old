@@ -45,21 +45,16 @@ enum collect_state {
 };
 
 struct _mate {
-        struct udev_list_node node;
+        LIST_FIELDS(struct _mate, mates);
         char *name;
         enum collect_state state;
 };
 
-static struct udev_list_node bunch;
+LIST_HEAD(struct _mate, bunch);
 static int debug;
 
 /* This can increase dynamically */
 static size_t bufsize = BUFSIZE;
-
-static inline struct _mate *node_to_mate(struct udev_list_node *node)
-{
-        return container_of(node, struct _mate, node);
-}
 
 noreturn static void sig_alrm(int signo)
 {
@@ -178,7 +173,7 @@ static int checkout(int fd)
                                         return log_oom();
                                 }
                                 him->state = STATE_OLD;
-                                udev_list_node_append(&him->node, &bunch);
+                                LIST_APPEND(mates, bunch, him);
                                 word = NULL;
                         }
                 }
@@ -204,15 +199,12 @@ static int checkout(int fd)
  */
 static void invite(char *us)
 {
-        struct udev_list_node *him_node;
-        struct _mate *who = NULL;
+        struct _mate *him = NULL, *who = NULL;
 
         if (debug)
                 fprintf(stderr, "Adding ID '%s'\n", us);
 
-        udev_list_node_foreach(him_node, &bunch) {
-                struct _mate *him = node_to_mate(him_node);
-
+        LIST_FOREACH(mates, him, bunch) {
                 if (streq(him->name, us)) {
                         him->state = STATE_CONFIRMED;
                         who = him;
@@ -220,7 +212,6 @@ static void invite(char *us)
         }
         if (debug && !who)
                 fprintf(stderr, "ID '%s' not in database\n", us);
-
 }
 
 /*
@@ -232,15 +223,12 @@ static void invite(char *us)
  */
 static void reject(char *us)
 {
-        struct udev_list_node *him_node;
-        struct _mate *who = NULL;
+        struct _mate *him = NULL, *who = NULL;
 
         if (debug)
                 fprintf(stderr, "Removing ID '%s'\n", us);
 
-        udev_list_node_foreach(him_node, &bunch) {
-                struct _mate *him = node_to_mate(him_node);
-
+        LIST_FOREACH(mates, him, bunch) {
                 if (streq(him->name, us)) {
                         him->state = STATE_NONE;
                         who = him;
@@ -258,14 +246,11 @@ static void reject(char *us)
  */
 static void kickout(void)
 {
-        struct udev_list_node *him_node;
-        struct udev_list_node *tmp;
+        struct _mate *him = NULL, *tmp = NULL;
 
-        udev_list_node_foreach_safe(him_node, tmp, &bunch) {
-                struct _mate *him = node_to_mate(him_node);
-
+        LIST_FOREACH_SAFE(mates, him, tmp, bunch) {
                 if (him->state == STATE_OLD) {
-                        udev_list_node_remove(&him->node);
+                        LIST_REMOVE(mates, bunch, him);
                         free(him->name);
                         free(him);
                 }
@@ -281,15 +266,13 @@ static int missing(int fd)
 {
         char *buf;
         int ret = 0;
-        struct udev_list_node *him_node;
+        struct _mate *him = NULL;
 
         buf = malloc(bufsize);
         if (!buf)
                 return log_oom();
 
-        udev_list_node_foreach(him_node, &bunch) {
-                struct _mate *him = node_to_mate(him_node);
-
+        LIST_FOREACH(mates, him, bunch) {
                 if (him->state == STATE_NONE) {
                         ret++;
                 } else {
@@ -323,12 +306,10 @@ static int missing(int fd)
  */
 static void everybody(void)
 {
-        struct udev_list_node *him_node;
+        struct _mate *him = NULL;
         const char *state = "";
 
-        udev_list_node_foreach(him_node, &bunch) {
-                struct _mate *him = node_to_mate(him_node);
-
+        LIST_FOREACH(mates, him, bunch) {
                 switch (him->state) {
                 case STATE_NONE:
                         state = "none";
@@ -409,7 +390,7 @@ int main(int argc, char **argv)
                 goto exit;
         }
 
-        udev_list_node_init(&bunch);
+        LIST_HEAD_INIT(bunch);
 
         if (debug)
                 fprintf(stderr, "Using checkpoint '%s'\n", checkpoint);
@@ -427,19 +408,14 @@ int main(int argc, char **argv)
         }
 
         for (i = argi; i < argc; i++) {
-                struct udev_list_node *him_node;
-                struct _mate *who;
+                struct _mate *him, *who;
 
                 who = NULL;
-                udev_list_node_foreach(him_node, &bunch) {
-                        struct _mate *him = node_to_mate(him_node);
-
+                LIST_FOREACH(mates, him, bunch)
                         if (streq(him->name, argv[i]))
                                 who = him;
-                }
-                if (!who) {
-                        struct _mate *him;
 
+                if (!who) {
                         if (debug)
                                 fprintf(stderr, "ID %s: not in database\n", argv[i]);
                         him = new(struct _mate, 1);
@@ -456,7 +432,7 @@ int main(int argc, char **argv)
                         }
 
                         him->state = STATE_NONE;
-                        udev_list_node_append(&him->node, &bunch);
+                        LIST_APPEND(mates, bunch, him);
                 } else {
                         if (debug)
                                 fprintf(stderr, "ID %s: found in database\n", argv[i]);

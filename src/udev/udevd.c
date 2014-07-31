@@ -78,8 +78,6 @@ static int arg_exec_delay;
 static usec_t arg_event_timeout_usec = 180 * USEC_PER_SEC;
 static usec_t arg_event_timeout_warn_usec = 180 * USEC_PER_SEC / 3;
 static sigset_t sigmask_orig;
-static UDEV_LIST(event_list);
-static UDEV_LIST(worker_list);
 static char *udev_cgroup;
 static bool udev_exit;
 
@@ -90,7 +88,7 @@ enum event_state {
 };
 
 struct event {
-        struct udev_list_node node;
+        LIST_FIELDS(struct event, queue);
         struct udev *udev;
         struct udev_device *dev;
         enum event_state state;
@@ -104,10 +102,7 @@ struct event {
         int ifindex;
         bool is_block;
 };
-
-static inline struct event *node_to_event(struct udev_list_node *node) {
-        return container_of(node, struct event, node);
-}
+static LIST_HEAD(struct event, event_list);
 
 static void event_queue_cleanup(struct udev *udev, enum event_state type);
 
@@ -119,7 +114,7 @@ enum worker_state {
 };
 
 struct worker {
-        struct udev_list_node node;
+        LIST_FIELDS(struct worker, workers);
         struct udev *udev;
         int refcount;
         pid_t pid;
@@ -129,6 +124,7 @@ struct worker {
         usec_t event_start_usec;
         bool event_warned;
 };
+static LIST_HEAD(struct worker, worker_list);
 
 /* passed from worker to main process */
 struct worker_message {
@@ -136,12 +132,8 @@ struct worker_message {
         int exitcode;
 };
 
-static inline struct worker *node_to_worker(struct udev_list_node *node) {
-        return container_of(node, struct worker, node);
-}
-
 static void event_queue_delete(struct event *event) {
-        udev_list_node_remove(&event->node);
+        LIST_REMOVE(queue, event_list, event);
         udev_device_unref(event->dev);
         free(event);
 }
@@ -152,7 +144,7 @@ static struct worker *worker_ref(struct worker *worker) {
 }
 
 static void worker_cleanup(struct worker *worker) {
-        udev_list_node_remove(&worker->node);
+        LIST_REMOVE(workers, worker_list, worker);
         udev_monitor_unref(worker->monitor);
         children--;
         free(worker);
@@ -167,13 +159,10 @@ static void worker_unref(struct worker *worker) {
 }
 
 static void worker_list_cleanup(struct udev *udev) {
-        struct udev_list_node *loop, *tmp;
+        struct worker *w;
 
-        udev_list_node_foreach_safe(loop, tmp, &worker_list) {
-                struct worker *worker = node_to_worker(loop);
-
-                worker_cleanup(worker);
-        }
+        while ((w = LIST_STEAL_FIRST(workers, worker_list)))
+                worker_cleanup(w);
 }
 
 static void worker_new(struct event *event) {
@@ -409,18 +398,16 @@ out:
                 worker->event_warned = false;
                 worker->event = event;
                 event->state = EVENT_RUNNING;
-                udev_list_node_append(&worker->node, &worker_list);
-                children++;
+                LIST_APPEND(workers, worker_list, worker);
                 log_debug("seq %llu forked new worker [%u]", udev_device_get_seqnum(event->dev), pid);
                 break;
         }
 }
 
 static void event_run(struct event *event) {
-        struct udev_list_node *loop;
+        struct worker *worker;
 
-        udev_list_node_foreach(loop, &worker_list) {
-                struct worker *worker = node_to_worker(loop);
+        LIST_FOREACH(workers, worker, worker_list) {
                 ssize_t count;
 
                 if (worker->state != WORKER_IDLE)
@@ -473,16 +460,14 @@ static int event_queue_insert(struct udev_device *dev) {
              udev_device_get_action(dev), udev_device_get_subsystem(dev));
 
         event->state = EVENT_QUEUED;
-        udev_list_node_append(&event->node, &event_list);
+        LIST_APPEND(queue, event_list, event);
         return 0;
 }
 
 static void worker_kill(struct udev *udev) {
-        struct udev_list_node *loop;
+        struct worker *worker;
 
-        udev_list_node_foreach(loop, &worker_list) {
-                struct worker *worker = node_to_worker(loop);
-
+        LIST_FOREACH(workers, worker, worker_list) {
                 if (worker->state == WORKER_KILLED)
                         continue;
 
@@ -493,13 +478,11 @@ static void worker_kill(struct udev *udev) {
 
 /* lookup event for identical, parent, child device */
 static bool is_devpath_busy(struct event *event) {
-        struct udev_list_node *loop;
+        struct event *loop_event;
         size_t common;
 
         /* check if queue contains events we depend on */
-        udev_list_node_foreach(loop, &event_list) {
-                struct event *loop_event = node_to_event(loop);
-
+        LIST_FOREACH(queue, loop_event, event_list) {
                 /* we already found a later event, earlier can not block us, no need to check again */
                 if (loop_event->seqnum < event->delaying_seqnum)
                         continue;
@@ -564,11 +547,9 @@ static bool is_devpath_busy(struct event *event) {
 }
 
 static void event_queue_start(struct udev *udev) {
-        struct udev_list_node *loop;
+        struct event *event;
 
-        udev_list_node_foreach(loop, &event_list) {
-                struct event *event = node_to_event(loop);
-
+        LIST_FOREACH(queue, event, event_list) {
                 if (event->state != EVENT_QUEUED)
                         continue;
 
@@ -581,32 +562,25 @@ static void event_queue_start(struct udev *udev) {
 }
 
 static void event_queue_cleanup(struct udev *udev, enum event_state match_type) {
-        struct udev_list_node *loop, *tmp;
+        struct event *event, *tmp;
 
-        udev_list_node_foreach_safe(loop, tmp, &event_list) {
-                struct event *event = node_to_event(loop);
-
-                if (match_type != EVENT_UNDEF && match_type != event->state)
-                        continue;
-
-                event_queue_delete(event);
-        }
+        LIST_FOREACH_SAFE(queue, event, tmp, event_list)
+                if (match_type == EVENT_UNDEF || match_type == event->state)
+                        event_queue_delete(event);
 }
 
 static void worker_returned(int fd_worker) {
         for (;;) {
                 struct worker_message msg;
+                struct worker *worker;
                 ssize_t size;
-                struct udev_list_node *loop;
 
                 size = recv(fd_worker, &msg, sizeof(struct worker_message), MSG_DONTWAIT);
                 if (size != sizeof(struct worker_message))
                         break;
 
                 /* lookup worker who sent the signal */
-                udev_list_node_foreach(loop, &worker_list) {
-                        struct worker *worker = node_to_worker(loop);
-
+                LIST_FOREACH(workers, worker, worker_list) {
                         if (worker->pid != msg.pid)
                                 continue;
 
@@ -863,15 +837,13 @@ static void handle_signal(struct udev *udev, int signo) {
                 for (;;) {
                         pid_t pid;
                         int status;
-                        struct udev_list_node *loop, *tmp;
+                        struct worker *worker, *tmp;
 
                         pid = waitpid(-1, &status, WNOHANG);
                         if (pid <= 0)
                                 break;
 
-                        udev_list_node_foreach_safe(loop, tmp, &worker_list) {
-                                struct worker *worker = node_to_worker(loop);
-
+                        LIST_FOREACH_SAFE(workers, worker, tmp, worker_list) {
                                 if (worker->pid != pid)
                                         continue;
                                 log_debug("worker [%u] exit", pid);
@@ -1279,8 +1251,8 @@ int main(int argc, char *argv[]) {
         }
         log_debug("set children_max to %u", arg_children_max);
 
-        udev_list_node_init(&event_list);
-        udev_list_node_init(&worker_list);
+        LIST_HEAD_INIT(event_list);
+        LIST_HEAD_INIT(worker_list);
 
         fd_inotify = udev_watch_init(udev);
         if (fd_inotify < 0) {
@@ -1358,12 +1330,12 @@ int main(int argc, char *argv[]) {
                         worker_kill(udev);
 
                         /* exit after all has cleaned up */
-                        if (udev_list_node_is_empty(&event_list) && children == 0)
+                        if (LIST_EMPTY(event_list) && children == 0)
                                 break;
 
                         /* timeout at exit for workers to finish */
                         timeout = 30 * MSEC_PER_SEC;
-                } else if (udev_list_node_is_empty(&event_list) && children == 0) {
+                } else if (LIST_EMPTY(event_list) && children == 0) {
                         /* we are idle */
                         timeout = -1;
 
@@ -1376,7 +1348,7 @@ int main(int argc, char *argv[]) {
                 }
 
                 /* tell settle that we are busy or idle */
-                if (!udev_list_node_is_empty(&event_list)) {
+                if (!LIST_EMPTY(event_list)) {
                         int fd;
 
                         fd = open("/run/udev/queue", O_WRONLY|O_CREAT|O_CLOEXEC|O_TRUNC|O_NOFOLLOW, 0444);
@@ -1391,7 +1363,7 @@ int main(int argc, char *argv[]) {
                         continue;
 
                 if (fdcount == 0) {
-                        struct udev_list_node *loop;
+                        struct worker *worker;
 
                         /* timeout */
                         if (udev_exit) {
@@ -1400,14 +1372,13 @@ int main(int argc, char *argv[]) {
                         }
 
                         /* kill idle workers */
-                        if (udev_list_node_is_empty(&event_list)) {
+                        if (LIST_EMPTY(event_list)) {
                                 log_debug("cleanup idle workers");
                                 worker_kill(udev);
                         }
 
                         /* check for hanging events */
-                        udev_list_node_foreach(loop, &worker_list) {
-                                struct worker *worker = node_to_worker(loop);
+                        LIST_FOREACH(workers, worker, worker_list) {
                                 usec_t ts;
 
                                 if (worker->state != WORKER_RUNNING)
@@ -1484,7 +1455,7 @@ int main(int argc, char *argv[]) {
                 }
 
                 /* start new events */
-                if (!udev_list_node_is_empty(&event_list) && !udev_exit && !stop_exec_queue) {
+                if (!LIST_EMPTY(event_list) && !udev_exit && !stop_exec_queue) {
                         udev_builtin_init(udev);
                         if (rules == NULL)
                                 rules = udev_rules_new(udev, arg_resolve_names);
