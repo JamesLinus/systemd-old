@@ -29,6 +29,7 @@
 #include "util.h"
 #include "mkdir.h"
 #include "strxcpyx.h"
+#include "list.h"
 
 #define READ_END  0
 #define WRITE_END 1
@@ -105,7 +106,7 @@ struct udev_list_node {
 };
 struct udev_list {
         struct udev *udev;
-        struct udev_list_node node;
+        LIST_HEAD(struct udev_list_entry, head);
         struct udev_list_entry **entries;
         unsigned int entries_cur;
         unsigned int entries_max;

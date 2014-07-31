@@ -41,7 +41,7 @@
  * contains a name, and optionally a value.
  */
 struct udev_list_entry {
-        struct udev_list_node node;
+        LIST_FIELDS(struct udev_list_entry, entries);
         struct udev_list *list;
         char *name;
         char *value;
@@ -87,33 +87,12 @@ void udev_list_node_remove(struct udev_list_node *entry)
         entry->next = NULL;
 }
 
-/* return list entry which embeds this node */
-static inline struct udev_list_entry *list_node_to_entry(struct udev_list_node *node)
-{
-        return container_of(node, struct udev_list_entry, node);
-}
-
 void udev_list_init(struct udev *udev, struct udev_list *list, bool unique)
 {
         memzero(list, sizeof(struct udev_list));
         list->udev = udev;
         list->unique = unique;
-        udev_list_node_init(&list->node);
-}
-
-/* insert entry into a list as the last element  */
-static void udev_list_entry_append(struct udev_list_entry *new, struct udev_list *list)
-{
-        /* inserting before the list head make the node the last node in the list */
-        udev_list_node_insert_between(&new->node, list->node.prev, &list->node);
-        new->list = list;
-}
-
-/* insert entry into a list, before a given existing entry */
-static void udev_list_entry_insert_before(struct udev_list_entry *new, struct udev_list_entry *entry)
-{
-        udev_list_node_insert_between(&new->node, entry->node.prev, &entry->node);
-        new->list = entry->list;
+        LIST_HEAD_INIT(list->head);
 }
 
 /* binary search in sorted array */
@@ -181,6 +160,8 @@ struct udev_list_entry *udev_list_entry_add(struct udev_list *list, const char *
                         return NULL;
                 }
         }
+        LIST_INIT(entries, entry);
+        entry->list = list;
 
         if (list->unique) {
                 /* allocate or enlarge sorted array if needed */
@@ -207,27 +188,27 @@ struct udev_list_entry *udev_list_entry_add(struct udev_list *list, const char *
 
                 /* insert into sorted list */
                 if ((unsigned int)i < list->entries_cur)
-                        udev_list_entry_insert_before(entry, list->entries[i]);
+                        LIST_INSERT_BEFORE(entries, list->head, list->entries[i], entry);
                 else
-                        udev_list_entry_append(entry, list);
+                        LIST_APPEND(entries, list->head, entry);
 
                 /* insert into sorted array */
                 memmove(&list->entries[i+1], &list->entries[i],
                         (list->entries_cur - i) * sizeof(struct udev_list_entry *));
                 list->entries[i] = entry;
                 list->entries_cur++;
-        } else {
-                udev_list_entry_append(entry, list);
-        }
+        } else
+                LIST_APPEND(entries, list->head, entry);
 
         return entry;
 }
 
 void udev_list_entry_delete(struct udev_list_entry *entry)
 {
-        if (entry->list->entries != NULL) {
+        struct udev_list *list = entry->list;
+
+        if (list->entries != NULL) {
                 int i;
-                struct udev_list *list = entry->list;
 
                 /* remove entry from sorted array */
                 i = list_search(list, entry->name);
@@ -238,7 +219,7 @@ void udev_list_entry_delete(struct udev_list_entry *entry)
                 }
         }
 
-        udev_list_node_remove(&entry->node);
+        LIST_REMOVE(entries, list->head, entry);
         free(entry->name);
         free(entry->value);
         free(entry);
@@ -246,8 +227,7 @@ void udev_list_entry_delete(struct udev_list_entry *entry)
 
 void udev_list_cleanup(struct udev_list *list)
 {
-        struct udev_list_entry *entry_loop;
-        struct udev_list_entry *entry_tmp;
+        struct udev_list_entry *entry_loop, *entry_tmp;
 
         free(list->entries);
         list->entries = NULL;
@@ -259,9 +239,7 @@ void udev_list_cleanup(struct udev_list *list)
 
 struct udev_list_entry *udev_list_get_entry(struct udev_list *list)
 {
-        if (udev_list_node_is_empty(&list->node))
-                return NULL;
-        return list_node_to_entry(list->node.next);
+        return LIST_FIRST(entries, list->head);
 }
 
 /**
@@ -274,15 +252,9 @@ struct udev_list_entry *udev_list_get_entry(struct udev_list *list)
  */
 _public_ struct udev_list_entry *udev_list_entry_get_next(struct udev_list_entry *list_entry)
 {
-        struct udev_list_node *next;
-
         if (list_entry == NULL)
                 return NULL;
-        next = list_entry->node.next;
-        /* empty list or no more entries */
-        if (next == &list_entry->list->node)
-                return NULL;
-        return list_node_to_entry(next);
+        return LIST_NEXT(entries, list_entry);
 }
 
 /**
