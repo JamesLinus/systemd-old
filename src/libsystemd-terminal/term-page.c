@@ -1073,83 +1073,6 @@ void term_line_reset(term_line *line, const term_attr *attr, term_age_t age) {
 }
 
 /**
- * term_line_link() - Link line in front of a list
- * @line: line to link
- * @first: member pointing to first entry
- * @last: member pointing to last entry
- *
- * This links a line into a list of lines. The line is inserted at the front and
- * must not be linked, yet. See the TERM_LINE_LINK() macro for an easier usage of
- * this.
- */
-void term_line_link(term_line *line, term_line **first, term_line **last) {
-        assert(line);
-        assert(first);
-        assert(last);
-        assert(!line->lines_prev);
-        assert(!line->lines_next);
-
-        line->lines_prev = NULL;
-        line->lines_next = *first;
-        if (*first)
-                (*first)->lines_prev = line;
-        else
-                *last = line;
-        *first = line;
-}
-
-/**
- * term_line_link_tail() - Link line at tail of a list
- * @line: line to link
- * @first: member pointing to first entry
- * @last: member pointing to last entry
- *
- * Same as term_line_link() but links the line at the tail.
- */
-void term_line_link_tail(term_line *line, term_line **first, term_line **last) {
-        assert(line);
-        assert(first);
-        assert(last);
-        assert(!line->lines_prev);
-        assert(!line->lines_next);
-
-        line->lines_next = NULL;
-        line->lines_prev = *last;
-        if (*last)
-                (*last)->lines_next = line;
-        else
-                *first = line;
-        *last = line;
-}
-
-/**
- * term_line_unlink() - Unlink line from a list
- * @line: line to unlink
- * @first: member pointing to first entry
- * @last: member pointing to last entry
- *
- * This unlinks a previously linked line. See TERM_LINE_UNLINK() for an easier to
- * use macro.
- */
-void term_line_unlink(term_line *line, term_line **first, term_line **last) {
-        assert(line);
-        assert(first);
-        assert(last);
-
-        if (line->lines_prev)
-                line->lines_prev->lines_next = line->lines_next;
-        else
-                *first = line->lines_next;
-        if (line->lines_next)
-                line->lines_next->lines_prev = line->lines_prev;
-        else
-                *last = line->lines_prev;
-
-        line->lines_prev = NULL;
-        line->lines_next = NULL;
-}
-
-/**
  * term_page_new() - Allocate new page
  * @out: storage for pointer to new page
  *
@@ -1986,8 +1909,7 @@ void term_history_trim(term_history *history, unsigned int max) {
         if (!history)
                 return;
 
-        while (history->n_lines > max && (line = history->lines_first)) {
-                TERM_LINE_UNLINK(line, history);
+        while (history->n_lines > max && (line = LIST_STEAL_FIRST(lines, history->lines))) {
                 term_line_free(line);
                 --history->n_lines;
         }
@@ -2005,10 +1927,9 @@ void term_history_push(term_history *history, term_line *line) {
         assert(history);
         assert(line);
 
-        TERM_LINE_LINK_TAIL(line, history);
+        LIST_APPEND(lines, history->lines, line);
         if (history->max_lines > 0 && history->n_lines >= history->max_lines) {
-                line = history->lines_first;
-                TERM_LINE_UNLINK(line, history);
+                line = LIST_STEAL_FIRST(lines, history->lines);
                 term_line_free(line);
         } else {
                 ++history->n_lines;
@@ -2047,7 +1968,7 @@ term_line *term_history_pop(term_history *history, unsigned int new_width, const
                 return NULL;
 
         term_line_set_width(line, new_width);
-        TERM_LINE_UNLINK(line, history);
+        LIST_REMOVE(lines, history->lines, line);
         --history->n_lines;
 
         return line;
@@ -2081,15 +2002,14 @@ unsigned int term_history_peek(term_history *history, unsigned int max, unsigned
         assert(history);
 
         num = 0;
-        line = history->lines_last;
 
-        while (num < max && line) {
+        LIST_FOREACH_REVERSE(lines, line, history->lines) {
                 r = term_line_reserve(line, reserve_width, attr, age, line->width);
                 if (r < 0)
                         break;
 
-                ++num;
-                line = line->lines_prev;
+                if (++num >= max)
+                        break;
         }
 
         return num;

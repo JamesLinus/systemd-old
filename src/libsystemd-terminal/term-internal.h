@@ -26,6 +26,7 @@
 #include <stdlib.h>
 #include "term.h"
 #include "util.h"
+#include "list.h"
 
 typedef struct term_char term_char_t;
 typedef struct term_charbuf term_charbuf_t;
@@ -145,8 +146,7 @@ struct term_cell {
  */
 
 struct term_line {
-        term_line *lines_next;          /* linked-list for histories */
-        term_line *lines_prev;          /* linked-list for histories */
+        LIST_FIELDS(lines, term_line);  /* linked-list for histories */
 
         unsigned int width;             /* visible width of line */
         unsigned int n_cells;           /* # of allocated cells */
@@ -170,14 +170,6 @@ void term_line_delete(term_line *line, unsigned int from, unsigned int num, cons
 void term_line_append_combchar(term_line *line, unsigned int pos_x, uint32_t ucs4, term_age_t age);
 void term_line_erase(term_line *line, unsigned int from, unsigned int num, const term_attr *attr, term_age_t age, bool keep_protected);
 void term_line_reset(term_line *line, const term_attr *attr, term_age_t age);
-
-void term_line_link(term_line *line, term_line **first, term_line **last);
-void term_line_link_tail(term_line *line, term_line **first, term_line **last);
-void term_line_unlink(term_line *line, term_line **first, term_line **last);
-
-#define TERM_LINE_LINK(_line, _head) term_line_link((_line), &(_head)->lines_first, &(_head)->lines_last)
-#define TERM_LINE_LINK_TAIL(_line, _head) term_line_link_tail((_line), &(_head)->lines_first, &(_head)->lines_last)
-#define TERM_LINE_UNLINK(_line, _head) term_line_unlink((_line), &(_head)->lines_first, &(_head)->lines_last)
 
 /*
  * Pages
@@ -240,8 +232,7 @@ void term_page_delete_lines(term_page *page, unsigned int pos_y, unsigned int nu
  */
 
 struct term_history {
-        term_line *lines_first;
-        term_line *lines_last;
+        LIST_HEAD(term_line, lines);
         unsigned int n_lines;
         unsigned int max_lines;
 };
