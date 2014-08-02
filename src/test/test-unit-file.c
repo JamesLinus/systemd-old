@@ -109,7 +109,7 @@ static void test_config_parse_exec(void) {
                               &c, NULL);
        /* test slashes */
         assert_se(r >= 0);
-        c1 = c->command_next;
+        c1 = LIST_NEXT(command, c);
         check_execcommand(c1, "/RValue/slashes", "/RValue///slashes///",
                           "r1", false);
 
@@ -118,7 +118,7 @@ static void test_config_parse_exec(void) {
                               "LValue", 0, "@/RValue///slashes2/// argv0 r1",
                               &c, NULL);
         assert_se(r >= 0);
-        c1 = c1->command_next;
+        c1 = LIST_NEXT(command, c1);
         check_execcommand(c1, "/RValue/slashes2", "argv0", "r1", false);
 
         /* ignore && honour_argv0 */
@@ -126,7 +126,7 @@ static void test_config_parse_exec(void) {
                               "LValue", 0, "-@/RValue///slashes3/// argv0a r1",
                               &c, NULL);
         assert_se(r >= 0);
-        c1 = c1->command_next;
+        c1 = LIST_NEXT(command, c1);
         check_execcommand(c1,
                           "/RValue/slashes3", "argv0a", "r1", true);
 
@@ -135,7 +135,7 @@ static void test_config_parse_exec(void) {
                               "LValue", 0, "@-/RValue///slashes4/// argv0b r1",
                               &c, NULL);
         assert_se(r >= 0);
-        c1 = c1->command_next;
+        c1 = LIST_NEXT(command, c1);
         check_execcommand(c1,
                           "/RValue/slashes4", "argv0b", "r1", true);
 
@@ -144,14 +144,14 @@ static void test_config_parse_exec(void) {
                               "LValue", 0, "--/RValue argv0 r1",
                               &c, NULL);
         assert_se(r == 0);
-        assert_se(c1->command_next == NULL);
+        assert_se(LIST_NEXT(command, c1) == NULL);
 
         /* ignore && ignore */
         r = config_parse_exec(NULL, "fake", 4, "section", 1,
                               "LValue", 0, "-@-/RValue argv0 r1",
                               &c, NULL);
         assert_se(r == 0);
-        assert_se(c1->command_next == NULL);
+        assert_se(LIST_NEXT(command, c1) == NULL);
 
         /* semicolon */
         r = config_parse_exec(NULL, "fake", 5, "section", 1,
@@ -160,11 +160,11 @@ static void test_config_parse_exec(void) {
                               "/goo/goo boo",
                               &c, NULL);
         assert_se(r >= 0);
-        c1 = c1->command_next;
+        c1 = LIST_NEXT(command, c1);
         check_execcommand(c1,
                           "/RValue", "argv0", "r1", true);
 
-        c1 = c1->command_next;
+        c1 = LIST_NEXT(command, c1);
         check_execcommand(c1,
                           "/goo/goo", "/goo/goo", "boo", false);
 
@@ -174,11 +174,11 @@ static void test_config_parse_exec(void) {
                               "-@/RValue argv0 r1 ; ",
                               &c, NULL);
         assert_se(r >= 0);
-        c1 = c1->command_next;
+        c1 = LIST_NEXT(command, c1);
         check_execcommand(c1,
                           "/RValue", "argv0", "r1", true);
 
-        assert_se(c1->command_next == NULL);
+        assert_se(LIST_NEXT(command, c1) == NULL);
 
         /* escaped semicolon */
         r = config_parse_exec(NULL, "fake", 5, "section", 1,
@@ -186,7 +186,7 @@ static void test_config_parse_exec(void) {
                               "/usr/bin/find \\;",
                               &c, NULL);
         assert_se(r >= 0);
-        c1 = c1->command_next;
+        c1 = LIST_NEXT(command, c1);
         check_execcommand(c1,
                           "/usr/bin/find", "/usr/bin/find", ";", false);
 

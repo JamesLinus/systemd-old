@@ -262,7 +262,7 @@ int dns_query_go(DnsQuery *q) {
         if (r < 0)
                 goto fail;
 
-        LIST_FOREACH(scopes, s, first->scopes_next) {
+        LIST_FOREACH_AFTER(scopes, s, first) {
                 DnsScopeMatch match;
 
                 match = dns_scope_good_domain(s, q->ifindex, q->flags, name);

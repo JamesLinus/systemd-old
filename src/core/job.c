@@ -77,8 +77,7 @@ Job* job_new(Unit *unit, JobType type) {
 void job_free(Job *j) {
         assert(j);
         assert(!j->installed);
-        assert(!j->transaction_prev);
-        assert(!j->transaction_next);
+        assert(!LIST_IN_LIST(transaction,j));
         assert(!j->subject_list);
         assert(!j->object_list);
 

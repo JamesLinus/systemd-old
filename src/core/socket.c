@@ -1879,11 +1879,11 @@ static void socket_run_next(Socket *s) {
 
         assert(s);
         assert(s->control_command);
-        assert(s->control_command->command_next);
+        assert(LIST_NEXT(command, s->control_command));
 
         socket_unwatch_control_pid(s);
 
-        s->control_command = s->control_command->command_next;
+        s->control_command = LIST_NEXT(command, s->control_command);
 
         r = socket_spawn(s, s->control_command, &s->control_pid);
         if (r < 0)
@@ -2368,7 +2368,7 @@ static void socket_sigchld_event(Unit *u, pid_t pid, int code, int status) {
                 s->result = f;
 
         if (s->control_command &&
-            s->control_command->command_next &&
+            LIST_NEXT(command, s->control_command) &&
             f == SOCKET_SUCCESS) {
 
                 log_debug_unit(u->id,

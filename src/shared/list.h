@@ -134,6 +134,27 @@
                 _LIST_INSERT_BETWEEN(name, _head, _prev, _where, _item);\
         } while(false)
 
+#define LIST_MERGE_LIST(name, head_a, head_b)                           \
+        do {                                                            \
+                typeof(*(head_a)) **_a = &(head_a), **_b = &(head_b),   \
+                        *_tail_a, *_head_b;                             \
+                if (!*_a)                                               \
+                        *_a = *_b;                                      \
+                else if (*_b) {                                         \
+                        _tail_a = LIST_LAST(name, *_a);                 \
+                        _head_b = LIST_FIRST(name, *_b);                \
+                                                                        \
+                        _tail_a->name##_next = _head_b;               \
+                        _head_b->name##_prev = _tail_a;               \
+                        (*_a)->name##_other_end = _head_b->name##_other_end; \
+                        (*_a)->name##_other_end->name##_other_end = *_a; \
+                        _tail_a->name##_other_end = NULL;             \
+                        _head_b->name##_other_end = NULL;             \
+                }                                                       \
+                                                                        \
+                *_b = NULL;                                             \
+        } while (false)
+
 /* Remove an item from the list */
 #define LIST_REMOVE(name,head,item)                                     \
         do {                                                            \
@@ -148,7 +169,7 @@
                         _new_end = _item->name##_prev;                  \
                 if (_item->name##_prev)                                 \
                         _item->name##_prev->name##_next = _item->name##_next; \
-                else {                                                  \
+                else if (_item->name##_other_end) {                     \
                         assert(*_head == _item);                        \
                         *_head = _item->name##_next;                    \
                         _new_end = _item->name##_next;                  \

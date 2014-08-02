@@ -328,7 +328,8 @@ static int service_verify(Service *s) {
                 return -EINVAL;
         }
 
-        if (s->type != SERVICE_ONESHOT && s->exec_command[SERVICE_EXEC_START]->command_next) {
+        if (s->type != SERVICE_ONESHOT &&
+            !LIST_JUST_US(command, s->exec_command[SERVICE_EXEC_START])) {
                 log_error_unit(UNIT(s)->id, "%s has more than one ExecStart= setting, which is only allowed for Type=oneshot services. Refusing.", UNIT(s)->id);
                 return -EINVAL;
         }
@@ -1546,11 +1547,11 @@ static void service_run_next_control(Service *s) {
 
         assert(s);
         assert(s->control_command);
-        assert(s->control_command->command_next);
+        assert(LIST_NEXT(command, s->control_command));
 
         assert(s->control_command_id != SERVICE_EXEC_START);
 
-        s->control_command = s->control_command->command_next;
+        s->control_command = LIST_NEXT(command, s->control_command);
         service_unwatch_control_pid(s);
 
         r = service_spawn(s,
@@ -1590,10 +1591,10 @@ static void service_run_next_main(Service *s) {
 
         assert(s);
         assert(s->main_command);
-        assert(s->main_command->command_next);
+        assert(LIST_NEXT(command, s->main_command));
         assert(s->type == SERVICE_ONESHOT);
 
-        s->main_command = s->main_command->command_next;
+        s->main_command = LIST_NEXT(command, s->main_command);
         service_unwatch_main_pid(s);
 
         r = service_spawn(s,
@@ -2212,7 +2213,7 @@ static void service_sigchld_event(Unit *u, pid_t pid, int code, int status) {
                         s->result = f;
 
                 if (s->main_command &&
-                    s->main_command->command_next &&
+                    LIST_NEXT(command, s->main_command) &&
                     f == SERVICE_SUCCESS) {
 
                         /* There is another command to *
@@ -2297,7 +2298,7 @@ static void service_sigchld_event(Unit *u, pid_t pid, int code, int status) {
                 service_kill_control_processes(s);
 
                 if (s->control_command &&
-                    s->control_command->command_next &&
+                    LIST_NEXT(command, s->control_command) &&
                     f == SERVICE_SUCCESS) {
 
                         /* There is another command to *

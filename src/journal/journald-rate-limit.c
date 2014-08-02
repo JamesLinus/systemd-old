@@ -67,7 +67,7 @@ struct JournalRateLimit {
         unsigned burst;
 
         JournalRateLimitGroup* buckets[BUCKETS_MAX];
-        JournalRateLimitGroup *lru, *lru_tail;
+        JournalRateLimitGroup *lru;
 
         unsigned n_groups;
 
@@ -96,9 +96,6 @@ static void journal_rate_limit_group_free(JournalRateLimitGroup *g) {
 
         if (g->parent) {
                 assert(g->parent->n_groups > 0);
-
-                if (g->parent->lru_tail == g)
-                        g->parent->lru_tail = g->lru_prev;
 
                 LIST_REMOVE(lru, g->parent->lru, g);
                 LIST_REMOVE(bucket, g->parent->buckets[g->hash % BUCKETS_MAX], g);
@@ -138,8 +135,9 @@ static void journal_rate_limit_vacuum(JournalRateLimit *r, usec_t ts) {
          * expored items too. */
 
         while (r->n_groups >= GROUPS_MAX ||
-               (r->lru_tail && journal_rate_limit_group_expired(r->lru_tail, ts)))
-                journal_rate_limit_group_free(r->lru_tail);
+               (!LIST_EMPTY(r->lru) &&
+                journal_rate_limit_group_expired(LIST_LAST(lru,r->lru), ts)))
+                journal_rate_limit_group_free(LIST_LAST(lru,r->lru));
 }
 
 static JournalRateLimitGroup* journal_rate_limit_group_new(JournalRateLimit *r, const char *id, usec_t ts) {
@@ -162,8 +160,6 @@ static JournalRateLimitGroup* journal_rate_limit_group_new(JournalRateLimit *r, 
 
         LIST_PREPEND(bucket, r->buckets[g->hash % BUCKETS_MAX], g);
         LIST_PREPEND(lru, r->lru, g);
-        if (!g->lru_next)
-                r->lru_tail = g;
         r->n_groups ++;
 
         g->parent = r;

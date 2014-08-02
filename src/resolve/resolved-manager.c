@@ -1275,8 +1275,8 @@ void manager_next_dns_server(Manager *m) {
                 return;
 
         /* Change to the next one */
-        if (m->current_dns_server->servers_next) {
-                manager_set_dns_server(m, m->current_dns_server->servers_next);
+        if (LIST_NEXT(servers, m->current_dns_server)) {
+                manager_set_dns_server(m, LIST_NEXT(servers, m->current_dns_server));
                 return;
         }
 

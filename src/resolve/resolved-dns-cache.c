@@ -224,7 +224,7 @@ static void dns_cache_item_update_positive(DnsCache *c, DnsCacheItem *i, DnsReso
 
         i->type = DNS_CACHE_POSITIVE;
 
-        if (!i->by_key_prev) {
+        if (!LIST_PREV(by_key, i)) {
                 /* We are the first item in the list, we need to
                  * update the key used in the hashmap */
 

@@ -157,7 +157,7 @@ int sd_dhcp6_lease_get_next_address(sd_dhcp6_lease *lease,
                 be32toh(lease->addr_iter->iaaddr.lifetime_preferred);
         *lifetime_valid = be32toh(lease->addr_iter->iaaddr.lifetime_valid);
 
-        lease->addr_iter = lease->addr_iter->addresses_next;
+        lease->addr_iter = LIST_NEXT(addresses, lease->addr_iter);
 
         return 0;
 }

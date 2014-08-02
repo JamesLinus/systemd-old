@@ -87,7 +87,7 @@ static void transaction_find_jobs_that_matter_to_anchor(Job *j, unsigned generat
 }
 
 static void transaction_merge_and_delete_job(Transaction *tr, Job *j, Job *other, JobType t) {
-        JobDependency *l, *last;
+        JobDependency *l;
 
         assert(j);
         assert(other);
@@ -104,36 +104,22 @@ static void transaction_merge_and_delete_job(Transaction *tr, Job *j, Job *other
         j->matters_to_anchor = j->matters_to_anchor || other->matters_to_anchor;
 
         /* Patch us in as new owner of the JobDependency objects */
-        last = NULL;
         LIST_FOREACH(subject, l, other->subject_list) {
                 assert(l->subject == other);
                 l->subject = j;
-                last = l;
         }
 
         /* Merge both lists */
-        if (last) {
-                last->subject_next = j->subject_list;
-                if (j->subject_list)
-                        j->subject_list->subject_prev = last;
-                j->subject_list = other->subject_list;
-        }
+        LIST_MERGE_LIST(subject, j->subject_list, other->subject_list);
 
         /* Patch us in as new owner of the JobDependency objects */
-        last = NULL;
         LIST_FOREACH(object, l, other->object_list) {
                 assert(l->object == other);
                 l->object = j;
-                last = l;
         }
 
         /* Merge both lists */
-        if (last) {
-                last->object_next = j->object_list;
-                if (j->object_list)
-                        j->object_list->object_prev = last;
-                j->object_list = other->object_list;
-        }
+        LIST_MERGE_LIST(object, j->object_list, other->object_list);
 
         /* Kill the other job */
         other->subject_list = NULL;
@@ -169,7 +155,7 @@ static int delete_one_unmergeable_job(Transaction *tr, Job *j) {
         /* We rely here on the fact that if a merged with b does not
          * merge with c, either a or b merge with c neither */
         LIST_FOREACH(transaction, j, j)
-                LIST_FOREACH(transaction, k, j->transaction_next) {
+                LIST_FOREACH_AFTER(transaction, k, j) {
                         Job *d;
 
                         /* Is this one mergeable? Then skip it */
@@ -248,7 +234,7 @@ static int transaction_merge_jobs(Transaction *tr, sd_bus_error *e) {
                 Job *k;
 
                 t = j->type;
-                LIST_FOREACH(transaction, k, j->transaction_next) {
+                LIST_FOREACH_AFTER(transaction, k, j) {
                         if (job_type_merge_and_collapse(&t, k->type, j->unit) >= 0)
                                 continue;
 
@@ -280,10 +266,10 @@ static int transaction_merge_jobs(Transaction *tr, sd_bus_error *e) {
                 Job *k;
 
                 /* Merge all transaction jobs for j->unit */
-                LIST_FOREACH(transaction, k, j->transaction_next)
+                LIST_FOREACH_AFTER(transaction, k, j)
                         assert_se(job_type_merge_and_collapse(&t, k->type, j->unit) == 0);
 
-                while ((k = j->transaction_next)) {
+                while ((k = LIST_NEXT(transaction, j))) {
                         if (tr->anchor_job == k) {
                                 transaction_merge_and_delete_job(tr, k, j, t);
                                 j = k;
@@ -291,8 +277,7 @@ static int transaction_merge_jobs(Transaction *tr, sd_bus_error *e) {
                                 transaction_merge_and_delete_job(tr, j, k, t);
                 }
 
-                assert(!j->transaction_next);
-                assert(!j->transaction_prev);
+                assert(LIST_JUST_US(transaction, j));
         }
 
         return 0;
@@ -329,7 +314,7 @@ rescan:
 
 _pure_ static bool unit_matters_to_anchor(Unit *u, Job *j) {
         assert(u);
-        assert(!j->transaction_prev);
+        assert(!LIST_PREV(transaction, j));
 
         /* Checks whether at least one of the jobs for this unit
          * matters to the anchor. */
@@ -348,7 +333,7 @@ static int transaction_verify_order_one(Transaction *tr, Job *j, Job *from, unsi
 
         assert(tr);
         assert(j);
-        assert(!j->transaction_prev);
+        assert(!LIST_PREV(transaction, j));
 
         /* Does a recursive sweep through the ordering graph, looking
          * for a cycle. If we find a cycle we try to break it. */
@@ -509,8 +494,7 @@ static int transaction_is_destructive(Transaction *tr, JobMode mode, sd_bus_erro
         HASHMAP_FOREACH(j, tr->jobs, i) {
 
                 /* Assume merged */
-                assert(!j->transaction_prev);
-                assert(!j->transaction_next);
+                assert(LIST_JUST_US(transaction, j));
 
                 if (j->unit->job && (mode == JOB_FAIL || j->unit->job->irreversible) &&
                     !job_type_is_superset(j->type, j->unit->job->type)) {
@@ -603,8 +587,7 @@ static int transaction_apply(Transaction *tr, Manager *m, JobMode mode) {
 
         HASHMAP_FOREACH(j, tr->jobs, i) {
                 /* Assume merged */
-                assert(!j->transaction_prev);
-                assert(!j->transaction_next);
+                assert(LIST_JUST_US(transaction, j));
 
                 r = hashmap_put(m->jobs, UINT32_TO_PTR(j->id), j);
                 if (r < 0)
@@ -800,20 +783,19 @@ static Job* transaction_add_one_job(Transaction *tr, JobType type, Unit *unit, b
 }
 
 static void transaction_unlink_job(Transaction *tr, Job *j, bool delete_dependencies) {
+        LIST_HEAD(Job, list);
+
         assert(tr);
         assert(j);
 
-        if (j->transaction_prev)
-                j->transaction_prev->transaction_next = j->transaction_next;
-        else if (j->transaction_next)
-                hashmap_replace(tr->jobs, j->unit, j->transaction_next);
-        else
+        list = hashmap_get(tr->jobs, j->unit);
+        if (!list) /* we are no longer in the hashmap */
+                list = LIST_FIRST(transaction, j);
+        LIST_REMOVE(transaction, list, j);
+        if (LIST_EMPTY(list))
                 hashmap_remove_value(tr->jobs, j->unit, j);
-
-        if (j->transaction_next)
-                j->transaction_next->transaction_prev = j->transaction_prev;
-
-        j->transaction_prev = j->transaction_next = NULL;
+        else
+                hashmap_replace(tr->jobs, j->unit, list);
 
         while (j->subject_list)
                 job_dependency_free(j->subject_list);

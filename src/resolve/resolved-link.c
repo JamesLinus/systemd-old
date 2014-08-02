@@ -338,8 +338,8 @@ void link_next_dns_server(Link *l) {
         if (!l->current_dns_server)
                 return;
 
-        if (l->current_dns_server->servers_next) {
-                link_set_dns_server(l, l->current_dns_server->servers_next);
+        if (LIST_NEXT(servers, l->current_dns_server)) {
+                link_set_dns_server(l, LIST_NEXT(servers, l->current_dns_server));
                 return;
         }
 

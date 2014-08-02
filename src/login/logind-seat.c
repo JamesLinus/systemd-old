@@ -132,7 +132,7 @@ int seat_save(Seat *s) {
                         fprintf(f,
                                 "%s%c",
                                 i->id,
-                                i->sessions_by_seat_next ? ' ' : '\n');
+                                LIST_NEXT(sessions_by_seat, i) ? ' ' : '\n');
                 }
 
                 fputs("UIDS=", f);
@@ -140,7 +140,7 @@ int seat_save(Seat *s) {
                         fprintf(f,
                                 UID_FMT"%c",
                                 i->user->uid,
-                                i->sessions_by_seat_next ? ' ' : '\n');
+                                LIST_NEXT(sessions_by_seat, i) ? ' ' : '\n');
         }
 
         fflush(f);
