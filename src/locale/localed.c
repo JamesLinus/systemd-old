@@ -228,7 +228,7 @@ static int x11_read_data(Context *c) {
                         if (r < 0)
                                 return r;
 
-                        if (strv_length(a) == 3) {
+                        if (r == 3) {
                                 if (streq(a[1], "XkbLayout")) {
                                         free_and_replace(&c->x11_layout, a[2]);
                                         a[2] = NULL;
@@ -251,7 +251,7 @@ static int x11_read_data(Context *c) {
                         if (r < 0)
                                 return -ENOMEM;
 
-                        if (strv_length(a) == 2 && streq(a[1], "InputClass"))
+                        if (r == 2 && streq(a[1], "InputClass"))
                                 in_section = true;
 
                 } else if (in_section && first_word(l, "EndSection"))
@@ -537,7 +537,7 @@ static int read_next_mapping(FILE *f, unsigned *n, char ***a) {
                 if (r < 0)
                         return r;
 
-                if (strv_length(b) < 5) {
+                if (r < 5) {
                         log_error("Invalid line "SYSTEMD_KBD_MODEL_MAP":%u, ignoring.", *n);
                         strv_free(b);
                         continue;

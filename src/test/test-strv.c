@@ -137,7 +137,7 @@ static void test_strv_join(void) {
         assert_se(streq(t, ""));
 }
 
-static void test_strv_quote_unquote(const char* const *split, const char *quoted) {
+static void test_strv_quote_unquote(const char* const *split, const char *quoted, int len) {
         _cleanup_free_ char *p;
         _cleanup_strv_free_ char **s;
         char **t;
@@ -150,7 +150,7 @@ static void test_strv_quote_unquote(const char* const *split, const char *quoted
         assert_se(streq(p, quoted));
 
         r = strv_split_quoted(&s, quoted);
-        assert_se(r == 0);
+        assert_se(r == len);
         assert_se(s);
         STRV_FOREACH(t, s) {
                 assert_se(*t);
@@ -159,7 +159,7 @@ static void test_strv_quote_unquote(const char* const *split, const char *quoted
         }
 }
 
-static void test_strv_unquote(const char *quoted, const char **list) {
+static void test_strv_unquote(const char *quoted, const char **list, int len) {
         _cleanup_strv_free_ char **s;
         _cleanup_free_ char *j;
         unsigned i = 0;
@@ -167,7 +167,7 @@ static void test_strv_unquote(const char *quoted, const char **list) {
         int r;
 
         r = strv_split_quoted(&s, quoted);
-        assert_se(r == 0);
+        assert_se(r == len);
         assert_se(s);
         j = strv_join(s, " | ");
         assert_se(j);
@@ -425,24 +425,24 @@ int main(int argc, char *argv[]) {
         test_strv_find_prefix();
         test_strv_join();
 
-        test_strv_quote_unquote(input_table_multiple, "\"one\" \"two\" \"three\"");
-        test_strv_quote_unquote(input_table_one, "\"one\"");
-        test_strv_quote_unquote(input_table_none, "");
-        test_strv_quote_unquote(input_table_quotes, QUOTES_STRING);
-        test_strv_quote_unquote(input_table_spaces, SPACES_STRING);
+        test_strv_quote_unquote(input_table_multiple, "\"one\" \"two\" \"three\"", 3);
+        test_strv_quote_unquote(input_table_one, "\"one\"", 1);
+        test_strv_quote_unquote(input_table_none, "", 0);
+        test_strv_quote_unquote(input_table_quotes, QUOTES_STRING, 5);
+        test_strv_quote_unquote(input_table_spaces, SPACES_STRING, 5);
 
-        test_strv_unquote("    foo=bar     \"waldo\"    zzz    ", (const char*[]) { "foo=bar", "waldo", "zzz", NULL });
-        test_strv_unquote("", (const char*[]) { NULL });
-        test_strv_unquote(" ", (const char*[]) { NULL });
-        test_strv_unquote("   ", (const char*[]) { NULL });
-        test_strv_unquote("   x", (const char*[]) { "x", NULL });
-        test_strv_unquote("x   ", (const char*[]) { "x", NULL });
-        test_strv_unquote("  x   ", (const char*[]) { "x", NULL });
-        test_strv_unquote("  \"x\"   ", (const char*[]) { "x", NULL });
-        test_strv_unquote("  'x'   ", (const char*[]) { "x", NULL });
-        test_strv_unquote("  'x\"'   ", (const char*[]) { "x\"", NULL });
-        test_strv_unquote("  \"x'\"   ", (const char*[]) { "x'", NULL });
-        test_strv_unquote("a  '--b=c \"d e\"'", (const char*[]) { "a", "--b=c \"d e\"", NULL });
+        test_strv_unquote("    foo=bar     \"waldo\"    zzz    ", (const char*[]) { "foo=bar", "waldo", "zzz", NULL }, 3);
+        test_strv_unquote("", (const char*[]) { NULL }, 0);
+        test_strv_unquote(" ", (const char*[]) { NULL }, 0);
+        test_strv_unquote("   ", (const char*[]) { NULL }, 0);
+        test_strv_unquote("   x", (const char*[]) { "x", NULL }, 1);
+        test_strv_unquote("x   ", (const char*[]) { "x", NULL }, 1);
+        test_strv_unquote("  x   ", (const char*[]) { "x", NULL }, 1);
+        test_strv_unquote("  \"x\"   ", (const char*[]) { "x", NULL }, 1);
+        test_strv_unquote("  'x'   ", (const char*[]) { "x", NULL }, 1);
+        test_strv_unquote("  'x\"'   ", (const char*[]) { "x\"", NULL }, 1);
+        test_strv_unquote("  \"x'\"   ", (const char*[]) { "x'", NULL }, 1);
+        test_strv_unquote("a  '--b=c \"d e\"'", (const char*[]) { "a", "--b=c \"d e\"", NULL }, 2);
 
         test_invalid_unquote("a  --b='c \"d e\"'");
         test_invalid_unquote("a  --b='c \"d e\" '");

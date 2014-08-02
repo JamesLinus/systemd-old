@@ -279,7 +279,7 @@ int strv_split_quoted(char ***t, const char *s) {
 
         r[i] = NULL;
         *t = r;
-        return 0;
+        return n;
 }
 
 char **strv_split_newlines(const char *s) {
