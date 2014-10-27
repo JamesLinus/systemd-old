@@ -620,7 +620,7 @@ static int next_for_match(
                 assert(direction == DIRECTION_DOWN ? np >= after_offset : np <= after_offset);
                 last_moved = m->matches;
 
-                LIST_LOOP_BUT_ONE(matches, i, m->matches, last_moved) {
+                LIST_LOOP_BUT_ONE(matches, i, last_moved) {
                         uint64_t cp;
 
                         r = next_for_match(j, i, f, np, direction, NULL, &cp);

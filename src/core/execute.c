@@ -2527,17 +2527,10 @@ void exec_command_dump_list(ExecCommand *c, FILE *f, const char *prefix) {
 }
 
 void exec_command_append_list(ExecCommand **l, ExecCommand *e) {
-        ExecCommand *end;
-
         assert(l);
         assert(e);
 
-        if (*l) {
-                /* It's kind of important, that we keep the order here */
-                LIST_FIND_TAIL(command, *l, end);
-                LIST_INSERT_AFTER(command, *l, end, e);
-        } else
-              *l = e;
+        LIST_APPEND(command, *l, e);
 }
 
 int exec_command_set(ExecCommand *c, const char *path, ...) {

@@ -44,7 +44,6 @@ struct Seat {
         Session **positions;
         size_t position_count;
 
-        bool in_gc_queue:1;
         bool started:1;
 
         LIST_FIELDS(Seat, gc_queue);

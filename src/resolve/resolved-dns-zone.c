@@ -55,26 +55,13 @@ static void dns_zone_item_free(DnsZoneItem *i) {
 DEFINE_TRIVIAL_CLEANUP_FUNC(DnsZoneItem*, dns_zone_item_free);
 
 static void dns_zone_item_remove_and_free(DnsZone *z, DnsZoneItem *i) {
-        DnsZoneItem *first;
-
         assert(z);
 
         if (!i)
                 return;
 
-        first = hashmap_get(z->by_key, i->rr->key);
-        LIST_REMOVE(by_key, first, i);
-        if (first)
-                assert_se(hashmap_replace(z->by_key, first->rr->key, first) >= 0);
-        else
-                hashmap_remove(z->by_key, i->rr->key);
-
-        first = hashmap_get(z->by_name, DNS_RESOURCE_KEY_NAME(i->rr->key));
-        LIST_REMOVE(by_name, first, i);
-        if (first)
-                assert_se(hashmap_replace(z->by_name, DNS_RESOURCE_KEY_NAME(first->rr->key), first) >= 0);
-        else
-                hashmap_remove(z->by_name, DNS_RESOURCE_KEY_NAME(i->rr->key));
+        HASHMAP_LIST_REMOVE(by_key, z->by_key, (item, item->rr->key), i);
+        HASHMAP_LIST_REMOVE(by_name, z->by_name, (item, DNS_RESOURCE_KEY_NAME(item->rr->key)), i);
 
         dns_zone_item_free(i);
 }
@@ -138,28 +125,15 @@ static int dns_zone_init(DnsZone *z) {
 }
 
 static int dns_zone_link_item(DnsZone *z, DnsZoneItem *i) {
-        DnsZoneItem *first;
         int r;
 
-        first = hashmap_get(z->by_key, i->rr->key);
-        if (first) {
-                LIST_PREPEND(by_key, first, i);
-                assert_se(hashmap_replace(z->by_key, first->rr->key, first) >= 0);
-        } else {
-                r = hashmap_put(z->by_key, i->rr->key, i);
-                if (r < 0)
-                        return r;
-        }
+        r = HASHMAP_LIST_PREPEND(by_key, z->by_key, (item, item->rr->key), i);
+        if (r < 0)
+                return r;
 
-        first = hashmap_get(z->by_name, DNS_RESOURCE_KEY_NAME(i->rr->key));
-        if (first) {
-                LIST_PREPEND(by_name, first, i);
-                assert_se(hashmap_replace(z->by_name, DNS_RESOURCE_KEY_NAME(first->rr->key), first) >= 0);
-        } else {
-                r = hashmap_put(z->by_name, DNS_RESOURCE_KEY_NAME(i->rr->key), i);
-                if (r < 0)
-                        return r;
-        }
+        r = HASHMAP_LIST_PREPEND(by_name, z->by_name, (item, DNS_RESOURCE_KEY_NAME(item->rr->key)), i);
+        if (r < 0)
+                return r;
 
         return 0;
 }
@@ -260,15 +234,14 @@ int dns_zone_put(DnsZone *z, DnsScope *s, DnsResourceRecord *rr, bool probe) {
                 return r;
 
         if (probe) {
-                DnsZoneItem *first, *j;
+                DnsZoneItem *j;
                 bool established = false;
 
                 /* Check if there's already an RR with the same name
                  * established. If so, it has been probed already, and
                  * we don't ned to probe again. */
 
-                LIST_FIND_HEAD(by_name, i, first);
-                LIST_FOREACH(by_name, j, first) {
+                LIST_FOREACH(by_name, j, LIST_FIRST(by_name, i)) {
                         if (i == j)
                                 continue;
 

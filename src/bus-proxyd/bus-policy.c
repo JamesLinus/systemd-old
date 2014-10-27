@@ -40,14 +40,6 @@ static void policy_item_free(PolicyItem *i) {
 
 DEFINE_TRIVIAL_CLEANUP_FUNC(PolicyItem*, policy_item_free);
 
-static void item_append(PolicyItem *i, PolicyItem **list) {
-
-        PolicyItem *tail;
-
-        LIST_FIND_TAIL(items, *list, tail);
-        LIST_INSERT_AFTER(items, *list, tail, i);
-}
-
 static int file_load(Policy *p, const char *path) {
 
         _cleanup_free_ char *c = NULL, *policy_user = NULL, *policy_group = NULL;
@@ -339,9 +331,9 @@ static int file_load(Policy *p, const char *path) {
                                 }
 
                                 if (policy_category == POLICY_CATEGORY_DEFAULT)
-                                        item_append(i, &p->default_items);
+                                        LIST_APPEND(items, p->default_items, i);
                                 else if (policy_category == POLICY_CATEGORY_MANDATORY)
-                                        item_append(i, &p->mandatory_items);
+                                        LIST_APPEND(items, p->mandatory_items, i);
                                 else if (policy_category == POLICY_CATEGORY_USER) {
                                         const char *u = policy_user;
 
@@ -361,17 +353,11 @@ static int file_load(Policy *p, const char *path) {
                                                 log_error("Failed to resolve user %s, ignoring policy: %s", u, strerror(-r));
                                                 free(i);
                                         } else {
-                                                PolicyItem *first;
-
-                                                first = hashmap_get(p->user_items, UINT32_TO_PTR(i->uid));
-                                                item_append(i, &first);
                                                 i->uid_valid = true;
 
-                                                r = hashmap_replace(p->user_items, UINT32_TO_PTR(i->uid), first);
-                                                if (r < 0) {
-                                                        LIST_REMOVE(items, first, i);
+                                                r = HASHMAP_LIST_APPEND(items, p->user_items, (item, UINT32_TO_PTR(item->uid)), i);
+                                                if (r < 0)
                                                         return log_oom();
-                                                }
                                         }
 
                                 } else if (policy_category == POLICY_CATEGORY_GROUP) {
@@ -393,17 +379,11 @@ static int file_load(Policy *p, const char *path) {
                                                 log_error("Failed to resolve group %s, ignoring policy: %s", g, strerror(-r));
                                                 free(i);
                                         } else {
-                                                PolicyItem *first;
-
-                                                first = hashmap_get(p->group_items, UINT32_TO_PTR(i->gid));
-                                                item_append(i, &first);
                                                 i->gid_valid = true;
 
-                                                r = hashmap_replace(p->group_items, UINT32_TO_PTR(i->gid), first);
-                                                if (r < 0) {
-                                                        LIST_REMOVE(items, first, i);
+                                                r = HASHMAP_LIST_APPEND(items, p->group_items, (item, UINT32_TO_PTR(item->gid)), i);
+                                                if (r < 0)
                                                         return log_oom();
-                                                }
                                         }
                                 }
 
@@ -680,22 +660,22 @@ static int check_policy_item(PolicyItem *i, const struct policy_check_filter *fi
 static int check_policy_items(PolicyItem *items, const struct policy_check_filter *filter) {
 
         PolicyItem *i;
-        int r, ret = DUNNO;
+        int r;
 
         assert(filter);
 
         /* Check all policies in a set - a broader one might be followed by a more specific one,
          * and the order of rules in policy definitions matters */
-        LIST_FOREACH(items, i, items) {
+        LIST_FOREACH_REVERSE(items, i, items) {
                 if (i->class != filter->class)
                         continue;
 
                 r = check_policy_item(i, filter);
                 if (r != DUNNO)
-                        ret = r;
+                        return r;
         }
 
-        return ret;
+        return DUNNO;
 }
 
 static int policy_check(Policy *p, const struct policy_check_filter *filter) {

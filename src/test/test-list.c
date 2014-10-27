@@ -27,14 +27,13 @@ int main(int argc, const char *argv[]) {
         } list_item;
         LIST_HEAD(list_item, head);
         list_item items[4];
-        list_item *cursor;
 
         LIST_HEAD_INIT(head);
         assert_se(head == NULL);
 
         for (i = 0; i < ELEMENTSOF(items); i++) {
                 LIST_INIT(item, &items[i]);
-                assert_se(LIST_JUST_US(item, &items[i]));
+                assert_se(!LIST_IN_LIST(item, &items[i]));
                 LIST_PREPEND(item, head, &items[i]);
         }
 
@@ -50,14 +49,12 @@ int main(int argc, const char *argv[]) {
         assert_se(items[2].item_prev == &items[3]);
         assert_se(items[3].item_prev == NULL);
 
-        LIST_FIND_HEAD(item, &items[0], cursor);
-        assert_se(cursor == &items[3]);
+        assert_se(&items[3] == LIST_FIRST(item, &items[0]));
 
-        LIST_FIND_TAIL(item, &items[3], cursor);
-        assert_se(cursor == &items[0]);
+        assert_se(&items[0] == LIST_LAST(item, &items[3]));
 
         LIST_REMOVE(item, head, &items[1]);
-        assert_se(LIST_JUST_US(item, &items[1]));
+        assert_se(!LIST_IN_LIST(item, &items[1]));
 
         assert_se(items[0].item_next == NULL);
         assert_se(items[2].item_next == &items[0]);
@@ -79,7 +76,7 @@ int main(int argc, const char *argv[]) {
         assert_se(items[3].item_prev == NULL);
 
         LIST_REMOVE(item, head, &items[0]);
-        assert_se(LIST_JUST_US(item, &items[0]));
+        assert_se(!LIST_IN_LIST(item, &items[0]));
 
         assert_se(items[2].item_next == NULL);
         assert_se(items[1].item_next == &items[2]);
@@ -90,7 +87,7 @@ int main(int argc, const char *argv[]) {
         assert_se(items[3].item_prev == NULL);
 
         LIST_REMOVE(item, head, &items[1]);
-        assert_se(LIST_JUST_US(item, &items[1]));
+        assert_se(!LIST_IN_LIST(item, &items[1]));
 
         assert_se(items[2].item_next == NULL);
         assert_se(items[3].item_next == &items[2]);
@@ -98,12 +95,12 @@ int main(int argc, const char *argv[]) {
         assert_se(items[2].item_prev == &items[3]);
         assert_se(items[3].item_prev == NULL);
 
-        LIST_REMOVE(item, head, &items[2]);
-        assert_se(LIST_JUST_US(item, &items[2]));
+        assert_se(LIST_STEAL_LAST(item, head) == &items[2]);
+        assert_se(!LIST_IN_LIST(item, &items[2]));
         assert_se(LIST_JUST_US(item, head));
 
         LIST_REMOVE(item, head, &items[3]);
-        assert_se(LIST_JUST_US(item, &items[3]));
+        assert_se(!LIST_IN_LIST(item, &items[3]));
 
         return 0;
 }

@@ -669,10 +669,7 @@ void bus_unit_send_change_signal(Unit *u) {
         int r;
         assert(u);
 
-        if (u->in_dbus_queue) {
-                LIST_REMOVE(dbus_queue, u->manager->dbus_unit_queue, u);
-                u->in_dbus_queue = false;
-        }
+        LIST_REMOVE(dbus_queue, u->manager->dbus_unit_queue, u);
 
         if (!u->id)
                 return;

@@ -79,6 +79,11 @@
 #define XCONCATENATE(x, y) x ## y
 #define CONCATENATE(x, y) XCONCATENATE(x, y)
 
+#define _LAMBDA_NAME(name, ...) name
+#define _LAMBDA_EXPR(name, ...) __VA_ARGS__
+#define LAMBDA(arg, lambda) \
+    ({ typeof(arg) _LAMBDA_NAME lambda = (arg); _LAMBDA_EXPR lambda; })
+
 #define UNIQ_T(x, uniq) CONCATENATE(__unique_prefix_, CONCATENATE(x, uniq))
 #define UNIQ __COUNTER__
 

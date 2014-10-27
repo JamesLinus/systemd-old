@@ -88,7 +88,6 @@ void device_free(Device *d) {
 }
 
 void device_attach(Device *d, Seat *s) {
-        Device *i;
         bool had_master;
 
         assert(d);
@@ -104,22 +103,11 @@ void device_attach(Device *d, Seat *s) {
         had_master = seat_has_master_device(s);
 
         /* We keep the device list sorted by the "master" flag. That is, master
-         * devices are at the front, other devices at the tail. As there is no
-         * way to easily add devices at the list-tail, we need to iterate the
-         * list to find the first non-master device when adding non-master
-         * devices. We assume there is only a few (normally 1) master devices
-         * per seat, so we iterate only a few times. */
-
-        if (d->master || !s->devices)
+         * devices are at the front, other devices at the tail. */
+        if (d->master)
                 LIST_PREPEND(devices, s->devices, d);
-        else {
-                LIST_FOREACH(devices, i, s->devices) {
-                        if (!i->devices_next || !i->master) {
-                                LIST_INSERT_AFTER(devices, s->devices, i, d);
-                                break;
-                        }
-                }
-        }
+        else
+                LIST_APPEND(devices, s->devices, d);
 
         if (!had_master && d->master)
                 seat_send_changed(s, "CanGraphical", NULL);

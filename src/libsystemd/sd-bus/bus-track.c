@@ -33,7 +33,6 @@ struct sd_bus_track {
         Hashmap *names;
         LIST_FIELDS(sd_bus_track, queue);
         Iterator iterator;
-        bool in_queue;
         bool modified;
 };
 
@@ -60,24 +59,11 @@ struct sd_bus_track {
 static void bus_track_add_to_queue(sd_bus_track *track) {
         assert(track);
 
-        if (track->in_queue)
-                return;
-
         if (!track->handler)
                 return;
 
-        LIST_PREPEND(queue, track->bus->track_queue, track);
-        track->in_queue = true;
-}
-
-static void bus_track_remove_from_queue(sd_bus_track *track) {
-        assert(track);
-
-        if (!track->in_queue)
-                return;
-
-        LIST_REMOVE(queue, track->bus->track_queue, track);
-        track->in_queue = false;
+        if (!LIST_IN_LIST(queue, track))
+                LIST_PREPEND(queue, track->bus->track_queue, track);
 }
 
 _public_ int sd_bus_track_new(
@@ -132,7 +118,7 @@ _public_ sd_bus_track* sd_bus_track_unref(sd_bus_track *track) {
         while ((n = hashmap_first_key(track->names)))
                 sd_bus_track_remove_name(track, n);
 
-        bus_track_remove_from_queue(track);
+        LIST_REMOVE(queue, track->bus->track_queue, track);
         hashmap_free(track->names);
         sd_bus_unref(track->bus);
         free(track);
@@ -197,7 +183,7 @@ _public_ int sd_bus_track_add_name(sd_bus_track *track, const char *name) {
         n = NULL;
         slot = NULL;
 
-        bus_track_remove_from_queue(track);
+        LIST_REMOVE(queue, track->bus->track_queue, track);
         track->modified = true;
 
         return 1;
@@ -300,10 +286,10 @@ void bus_track_dispatch(sd_bus_track *track) {
         int r;
 
         assert(track);
-        assert(track->in_queue);
+        assert(LIST_IN_LIST(queue, track));
         assert(track->handler);
 
-        bus_track_remove_from_queue(track);
+        LIST_REMOVE(queue, track->bus->track_queue, track);
 
         sd_bus_track_ref(track);
 

@@ -689,8 +689,6 @@ static unsigned manager_dispatch_cleanup_queue(Manager *m) {
         assert(m);
 
         while ((u = m->cleanup_queue)) {
-                assert(u->in_cleanup_queue);
-
                 unit_free(u);
                 n++;
         }
@@ -718,7 +716,7 @@ static void unit_gc_sweep(Unit *u, unsigned gc_marker) {
             u->gc_marker == gc_marker + GC_OFFSET_IN_PATH)
                 return;
 
-        if (u->in_cleanup_queue)
+        if (LIST_IN_LIST(cleanup_queue, u))
                 goto bad;
 
         if (unit_check_gc(u))
@@ -774,12 +772,9 @@ static unsigned manager_dispatch_gc_queue(Manager *m) {
         gc_marker = m->gc_marker;
 
         while ((u = m->gc_queue)) {
-                assert(u->in_gc_queue);
-
                 unit_gc_sweep(u, gc_marker);
 
                 LIST_REMOVE(gc_queue, m->gc_queue, u);
-                u->in_gc_queue = false;
 
                 n++;
 
@@ -1224,8 +1219,6 @@ unsigned manager_dispatch_load_queue(Manager *m) {
          * tries to load its data until the queue is empty */
 
         while ((u = m->load_queue)) {
-                assert(u->in_load_queue);
-
                 unit_load(u);
                 n++;
         }
@@ -1365,7 +1358,6 @@ static int manager_dispatch_run_queue(sd_event_source *source, void *userdata) {
 
         while ((j = m->run_queue)) {
                 assert(j->installed);
-                assert(j->in_run_queue);
 
                 job_run_and_invalidate(j);
         }
@@ -1392,15 +1384,11 @@ static unsigned manager_dispatch_dbus_queue(Manager *m) {
         m->dispatching_dbus_queue = true;
 
         while ((u = m->dbus_unit_queue)) {
-                assert(u->in_dbus_queue);
-
                 bus_unit_send_change_signal(u);
                 n++;
         }
 
         while ((j = m->dbus_job_queue)) {
-                assert(j->in_dbus_queue);
-
                 bus_job_send_change_signal(j);
                 n++;
         }

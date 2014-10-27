@@ -4255,10 +4255,8 @@ static int show_one(
                         r = 3;
         }
 
-        while ((p = info.exec)) {
-                LIST_REMOVE(exec, info.exec, p);
+        while ((p = LIST_STEAL_FIRST(exec, info.exec)))
                 exec_status_info_free(p);
-        }
 
         return r;
 }

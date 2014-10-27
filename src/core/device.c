@@ -512,7 +512,7 @@ static int device_following_set(Unit *u, Set **_set) {
         assert(d);
         assert(_set);
 
-        if (LIST_JUST_US(same_sysfs, d)) {
+        if (LIST_JUST_US(same_sysfs, d) || !LIST_IN_LIST(same_sysfs, d)) {
                 *_set = NULL;
                 return 0;
         }
@@ -521,13 +521,7 @@ static int device_following_set(Unit *u, Set **_set) {
         if (!set)
                 return -ENOMEM;
 
-        LIST_FOREACH_AFTER(same_sysfs, other, d) {
-                r = set_put(set, other);
-                if (r < 0)
-                        goto fail;
-        }
-
-        LIST_FOREACH_BEFORE(same_sysfs, other, d) {
+        LIST_LOOP_BUT_ONE(same_sysfs, other, d) {
                 r = set_put(set, other);
                 if (r < 0)
                         goto fail;

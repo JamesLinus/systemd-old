@@ -230,15 +230,11 @@ static void link_free(Link *link) {
         if (!link)
                 return;
 
-        while ((address = link->addresses)) {
-                LIST_REMOVE(addresses, link->addresses, address);
+        while ((address = LIST_STEAL_FIRST(addresses, link->addresses)))
                 address_free(address);
-        }
 
-        while ((address = link->pool_addresses)) {
-                LIST_REMOVE(addresses, link->pool_addresses, address);
+        while ((address = LIST_STEAL_FIRST(addresses, link->pool_addresses)))
                 address_free(address);
-        }
 
         sd_dhcp_client_unref(link->dhcp_client);
         sd_dhcp_lease_unref(link->dhcp_lease);

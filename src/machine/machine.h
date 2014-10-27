@@ -70,7 +70,6 @@ struct Machine {
 
         dual_timestamp timestamp;
 
-        bool in_gc_queue:1;
         bool started:1;
         bool registered:1;
 

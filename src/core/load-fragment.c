@@ -289,7 +289,6 @@ int config_parse_socket_listen(const char *unit,
                                void *userdata) {
 
         _cleanup_free_ SocketPort *p = NULL;
-        SocketPort *tail;
         Socket *s;
         int r;
 
@@ -376,11 +375,7 @@ int config_parse_socket_listen(const char *unit,
         p->fd = -1;
         p->socket = s;
 
-        if (s->ports) {
-                LIST_FIND_TAIL(port, s->ports, tail);
-                LIST_INSERT_AFTER(port, s->ports, tail, p);
-        } else
-                LIST_PREPEND(port, s->ports, p);
+        LIST_APPEND(port, s->ports, p);
         p = NULL;
 
         return 0;

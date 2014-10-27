@@ -649,10 +649,7 @@ static int unit_realize_cgroup_now(Unit *u, ManagerState state) {
 
         assert(u);
 
-        if (u->in_cgroup_queue) {
-                LIST_REMOVE(cgroup_queue, u->manager->cgroup_queue, u);
-                u->in_cgroup_queue = false;
-        }
+        LIST_REMOVE(cgroup_queue, u->manager->cgroup_queue, u);
 
         mask = unit_get_target_mask(u);
 
@@ -679,11 +676,8 @@ static int unit_realize_cgroup_now(Unit *u, ManagerState state) {
 
 static void unit_add_to_cgroup_queue(Unit *u) {
 
-        if (u->in_cgroup_queue)
-                return;
-
-        LIST_PREPEND(cgroup_queue, u->manager->cgroup_queue, u);
-        u->in_cgroup_queue = true;
+        if (!LIST_IN_LIST(cgroup_queue, u))
+                LIST_PREPEND(cgroup_queue, u->manager->cgroup_queue, u);
 }
 
 unsigned manager_dispatch_cgroup_queue(Manager *m) {
@@ -695,7 +689,7 @@ unsigned manager_dispatch_cgroup_queue(Manager *m) {
         state = manager_state(m);
 
         while ((i = m->cgroup_queue)) {
-                assert(i->in_cgroup_queue);
+                assert(LIST_IN_LIST(cgroup_queue, i));
 
                 r = unit_realize_cgroup_now(i, state);
                 if (r < 0)

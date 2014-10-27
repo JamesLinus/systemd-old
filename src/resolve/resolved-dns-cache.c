@@ -60,20 +60,12 @@ static void dns_cache_item_free(DnsCacheItem *i) {
 DEFINE_TRIVIAL_CLEANUP_FUNC(DnsCacheItem*, dns_cache_item_free);
 
 static void dns_cache_item_remove_and_free(DnsCache *c, DnsCacheItem *i) {
-        DnsCacheItem *first;
-
         assert(c);
 
         if (!i)
                 return;
 
-        first = hashmap_get(c->by_key, i->key);
-        LIST_REMOVE(by_key, first, i);
-
-        if (first)
-                assert_se(hashmap_replace(c->by_key, first->key, first) >= 0);
-        else
-                hashmap_remove(c->by_key, i->key);
+        HASHMAP_LIST_REMOVE(by_key, c->by_key, (item, item->key), i);
 
         prioq_remove(c->by_expiry, i, &i->prioq_idx);
 
@@ -194,7 +186,6 @@ static int dns_cache_init(DnsCache *c) {
 }
 
 static int dns_cache_link_item(DnsCache *c, DnsCacheItem *i) {
-        DnsCacheItem *first;
         int r;
 
         assert(c);
@@ -204,16 +195,10 @@ static int dns_cache_link_item(DnsCache *c, DnsCacheItem *i) {
         if (r < 0)
                 return r;
 
-        first = hashmap_get(c->by_key, i->key);
-        if (first) {
-                LIST_PREPEND(by_key, first, i);
-                assert_se(hashmap_replace(c->by_key, first->key, first) >= 0);
-        } else {
-                r = hashmap_put(c->by_key, i->key, i);
-                if (r < 0) {
-                        prioq_remove(c->by_expiry, i, &i->prioq_idx);
-                        return r;
-                }
+        r = HASHMAP_LIST_PREPEND(by_key, c->by_key, (item, item->key), i);
+        if (r < 0) {
+                prioq_remove(c->by_expiry, i, &i->prioq_idx);
+                return r;
         }
 
         return 0;

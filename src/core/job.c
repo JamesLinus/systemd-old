@@ -82,11 +82,8 @@ void job_free(Job *j) {
         assert(!j->subject_list);
         assert(!j->object_list);
 
-        if (j->in_run_queue)
-                LIST_REMOVE(run_queue, j->manager->run_queue, j);
-
-        if (j->in_dbus_queue)
-                LIST_REMOVE(dbus_queue, j->manager->dbus_job_queue, j);
+        LIST_REMOVE(run_queue, j->manager->run_queue, j);
+        LIST_REMOVE(dbus_queue, j->manager->dbus_job_queue, j);
 
         sd_event_source_unref(j->timer_event_source);
 
@@ -470,10 +467,9 @@ int job_run_and_invalidate(Job *j) {
         assert(j);
         assert(j->installed);
         assert(j->type < _JOB_TYPE_MAX_IN_TRANSACTION);
-        assert(j->in_run_queue);
+        assert(LIST_IN_LIST(run_queue, j));
 
         LIST_REMOVE(run_queue, j->manager->run_queue, j);
-        j->in_run_queue = false;
 
         if (j->state != JOB_WAITING)
                 return 0;
@@ -896,21 +892,20 @@ void job_add_to_run_queue(Job *j) {
         assert(j);
         assert(j->installed);
 
-        if (j->in_run_queue)
+        if (LIST_IN_LIST(run_queue, j))
                 return;
 
         if (!j->manager->run_queue)
                 sd_event_source_set_enabled(j->manager->run_queue_event_source, SD_EVENT_ONESHOT);
 
         LIST_PREPEND(run_queue, j->manager->run_queue, j);
-        j->in_run_queue = true;
 }
 
 void job_add_to_dbus_queue(Job *j) {
         assert(j);
         assert(j->installed);
 
-        if (j->in_dbus_queue)
+        if (LIST_IN_LIST(dbus_queue, j))
                 return;
 
         /* We don't check if anybody is subscribed here, since this
@@ -918,7 +913,6 @@ void job_add_to_dbus_queue(Job *j) {
          * connection/client. */
 
         LIST_PREPEND(dbus_queue, j->manager->dbus_job_queue, j);
-        j->in_dbus_queue = true;
 }
 
 char *job_dbus_path(Job *j) {

@@ -76,8 +76,7 @@ fail:
 void user_free(User *u) {
         assert(u);
 
-        if (u->in_gc_queue)
-                LIST_REMOVE(gc_queue, u->manager->user_gc_queue, u);
+        LIST_REMOVE(gc_queue, u->manager->user_gc_queue, u);
 
         while (u->sessions)
                 session_free(u->sessions);
@@ -670,11 +669,8 @@ bool user_check_gc(User *u, bool drop_not_started) {
 void user_add_to_gc_queue(User *u) {
         assert(u);
 
-        if (u->in_gc_queue)
-                return;
-
-        LIST_PREPEND(gc_queue, u->manager->user_gc_queue, u);
-        u->in_gc_queue = true;
+        if (!LIST_IN_LIST(gc_queue, u))
+                LIST_PREPEND(gc_queue, u->manager->user_gc_queue, u);
 }
 
 UserState user_get_state(User *u) {

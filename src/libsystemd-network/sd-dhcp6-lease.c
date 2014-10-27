@@ -63,13 +63,8 @@ DHCP6IA *dhcp6_lease_free_ia(DHCP6IA *ia) {
 
         dhcp6_lease_clear_timers(ia);
 
-        while (ia->addresses) {
-                address = ia->addresses;
-
-                LIST_REMOVE(addresses, ia->addresses, address);
-
+        while ((address = LIST_STEAL_FIRST(addresses, ia->addresses)))
                 free(address);
-        }
 
         return NULL;
 }

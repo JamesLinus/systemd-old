@@ -83,7 +83,7 @@ static void svg_header(void) {
         assert(head);
 
         sampledata = head;
-        LIST_FIND_TAIL(link, sampledata, head);
+        head = LIST_LAST(link, sampledata);
         sampledata_last = head;
         LIST_FOREACH_BEFORE(link, sampledata, head) {
                 sampledata_last = sampledata;

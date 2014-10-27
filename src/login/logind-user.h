@@ -59,7 +59,6 @@ struct User {
 
         dual_timestamp timestamp;
 
-        bool in_gc_queue:1;
         bool started:1;
         bool stopping:1;
 

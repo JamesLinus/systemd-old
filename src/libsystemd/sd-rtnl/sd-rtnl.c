@@ -182,10 +182,8 @@ sd_rtnl *sd_rtnl_unref(sd_rtnl *rtnl) {
                 sd_event_source_unref(rtnl->exit_event_source);
                 sd_event_unref(rtnl->event);
 
-                while ((f = rtnl->match_callbacks)) {
-                        LIST_REMOVE(match_callbacks, rtnl->match_callbacks, f);
+                while ((f = LIST_STEAL_FIRST(match_callbacks, rtnl->match_callbacks)))
                         free(f);
-                }
 
                 safe_close(rtnl->fd);
                 free(rtnl);

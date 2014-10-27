@@ -72,7 +72,6 @@ static void swap_unset_proc_swaps(Swap *s) {
 
 static int swap_set_devnode(Swap *s, const char *devnode) {
         Hashmap *swaps;
-        Swap *first;
         int r;
 
         assert(s);
@@ -84,13 +83,7 @@ static int swap_set_devnode(Swap *s, const char *devnode) {
         swaps = UNIT(s)->manager->swaps_by_devnode;
 
         if (s->devnode) {
-                first = hashmap_get(swaps, s->devnode);
-
-                LIST_REMOVE(same_devnode, first, s);
-                if (first)
-                        hashmap_replace(swaps, first->devnode, first);
-                else
-                        hashmap_remove(swaps, s->devnode);
+                HASHMAP_LIST_REMOVE(same_devnode, swaps, (swap, swap->devnode), s);
 
                 free(s->devnode);
                 s->devnode = NULL;
@@ -101,10 +94,7 @@ static int swap_set_devnode(Swap *s, const char *devnode) {
                 if (!s->devnode)
                         return -ENOMEM;
 
-                first = hashmap_get(swaps, s->devnode);
-                LIST_PREPEND(same_devnode, first, s);
-
-                return hashmap_replace(swaps, first->devnode, first);
+                return HASHMAP_LIST_PREPEND(same_devnode, swaps, (swap, swap->devnode), s);
         }
 
         return 0;
@@ -1253,7 +1243,7 @@ static int swap_following_set(Unit *u, Set **_set) {
         assert(s);
         assert(_set);
 
-        if (LIST_JUST_US(same_devnode, s)) {
+        if (LIST_JUST_US(same_devnode, s) || !LIST_IN_LIST(same_devnode, s)) {
                 *_set = NULL;
                 return 0;
         }
@@ -1262,13 +1252,7 @@ static int swap_following_set(Unit *u, Set **_set) {
         if (!set)
                 return -ENOMEM;
 
-        LIST_FOREACH_AFTER(same_devnode, other, s) {
-                r = set_put(set, other);
-                if (r < 0)
-                        goto fail;
-        }
-
-        LIST_FOREACH_BEFORE(same_devnode, other, s) {
+        LIST_LOOP_BUT_ONE(same_devnode, other, s) {
                 r = set_put(set, other);
                 if (r < 0)
                         goto fail;

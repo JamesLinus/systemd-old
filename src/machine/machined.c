@@ -248,10 +248,7 @@ void manager_gc(Manager *m, bool drop_not_started) {
 
         assert(m);
 
-        while ((machine = m->machine_gc_queue)) {
-                LIST_REMOVE(gc_queue, m->machine_gc_queue, machine);
-                machine->in_gc_queue = false;
-
+        while ((machine = LIST_STEAL_FIRST(gc_queue, m->machine_gc_queue))) {
                 if (!machine_check_gc(machine, drop_not_started)) {
                         machine_stop(machine);
                         machine_free(machine);

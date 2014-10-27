@@ -931,20 +931,14 @@ void manager_gc(Manager *m, bool drop_not_started) {
 
         assert(m);
 
-        while ((seat = m->seat_gc_queue)) {
-                LIST_REMOVE(gc_queue, m->seat_gc_queue, seat);
-                seat->in_gc_queue = false;
-
+        while ((seat = LIST_STEAL_FIRST(gc_queue, m->seat_gc_queue))) {
                 if (!seat_check_gc(seat, drop_not_started)) {
                         seat_stop(seat, false);
                         seat_free(seat);
                 }
         }
 
-        while ((session = m->session_gc_queue)) {
-                LIST_REMOVE(gc_queue, m->session_gc_queue, session);
-                session->in_gc_queue = false;
-
+        while ((session = LIST_STEAL_FIRST(gc_queue, m->session_gc_queue))) {
                 /* First, if we are not closing yet, initiate stopping */
                 if (!session_check_gc(session, drop_not_started) &&
                     session_get_state(session) != SESSION_CLOSING)
@@ -959,10 +953,7 @@ void manager_gc(Manager *m, bool drop_not_started) {
                 }
         }
 
-        while ((user = m->user_gc_queue)) {
-                LIST_REMOVE(gc_queue, m->user_gc_queue, user);
-                user->in_gc_queue = false;
-
+        while ((user = LIST_STEAL_FIRST(gc_queue, m->user_gc_queue))) {
                 /* First step: queue stop jobs */
                 if (!user_check_gc(user, drop_not_started))
                         user_stop(user, false);

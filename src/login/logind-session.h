@@ -111,7 +111,6 @@ struct Session {
         bool idle_hint;
         dual_timestamp idle_hint_timestamp;
 
-        bool in_gc_queue:1;
         bool started:1;
         bool stopping:1;
 

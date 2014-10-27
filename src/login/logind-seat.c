@@ -66,8 +66,7 @@ Seat *seat_new(Manager *m, const char *id) {
 void seat_free(Seat *s) {
         assert(s);
 
-        if (s->in_gc_queue)
-                LIST_REMOVE(gc_queue, s->manager->seat_gc_queue, s);
+        LIST_REMOVE(gc_queue, s->manager->seat_gc_queue, s);
 
         while (s->sessions)
                 session_free(s->sessions);
@@ -638,11 +637,8 @@ bool seat_check_gc(Seat *s, bool drop_not_started) {
 void seat_add_to_gc_queue(Seat *s) {
         assert(s);
 
-        if (s->in_gc_queue)
-                return;
-
-        LIST_PREPEND(gc_queue, s->manager->seat_gc_queue, s);
-        s->in_gc_queue = true;
+        if (!LIST_IN_LIST(gc_queue, s))
+                LIST_PREPEND(gc_queue, s->manager->seat_gc_queue, s);
 }
 
 static bool seat_name_valid_char(char c) {

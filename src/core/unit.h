@@ -206,12 +206,6 @@ struct Unit {
         /* Is this a transient unit? */
         bool transient;
 
-        bool in_load_queue:1;
-        bool in_dbus_queue:1;
-        bool in_cleanup_queue:1;
-        bool in_gc_queue:1;
-        bool in_cgroup_queue:1;
-
         bool sent_dbus_new_signal:1;
 
         bool no_gc:1;

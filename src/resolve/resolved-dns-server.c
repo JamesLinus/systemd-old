@@ -31,7 +31,7 @@ int dns_server_new(
                 int family,
                 const union in_addr_union *in_addr) {
 
-        DnsServer *s, *tail;
+        DnsServer *s;
 
         assert(m);
         assert((type == DNS_SERVER_LINK) == !!l);
@@ -46,16 +46,13 @@ int dns_server_new(
         s->address = *in_addr;
 
         if (type == DNS_SERVER_LINK) {
-                LIST_FIND_TAIL(servers, l->dns_servers, tail);
-                LIST_INSERT_AFTER(servers, l->dns_servers, tail, s);
+                LIST_APPEND(servers, l->dns_servers, s);
                 s->link = l;
-        } else if (type == DNS_SERVER_SYSTEM) {
-                LIST_FIND_TAIL(servers, m->dns_servers, tail);
-                LIST_INSERT_AFTER(servers, m->dns_servers, tail, s);
-        } else if (type == DNS_SERVER_FALLBACK) {
-                LIST_FIND_TAIL(servers, m->fallback_dns_servers, tail);
-                LIST_INSERT_AFTER(servers, m->fallback_dns_servers, tail, s);
-        } else
+        } else if (type == DNS_SERVER_SYSTEM)
+                LIST_APPEND(servers, m->dns_servers, s);
+        else if (type == DNS_SERVER_FALLBACK)
+                LIST_APPEND(servers, m->fallback_dns_servers, s);
+        else
                 assert_not_reached("Unknown server type");
 
         s->manager = m;

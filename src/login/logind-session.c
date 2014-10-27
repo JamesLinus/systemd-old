@@ -89,8 +89,7 @@ void session_free(Session *s) {
 
         assert(s);
 
-        if (s->in_gc_queue)
-                LIST_REMOVE(gc_queue, s->manager->session_gc_queue, s);
+        LIST_REMOVE(gc_queue, s->manager->session_gc_queue, s);
 
         s->timer_event_source = sd_event_source_unref(s->timer_event_source);
 
@@ -926,11 +925,8 @@ bool session_check_gc(Session *s, bool drop_not_started) {
 void session_add_to_gc_queue(Session *s) {
         assert(s);
 
-        if (s->in_gc_queue)
-                return;
-
-        LIST_PREPEND(gc_queue, s->manager->session_gc_queue, s);
-        s->in_gc_queue = true;
+        if (!LIST_IN_LIST(gc_queue, s))
+                LIST_PREPEND(gc_queue, s->manager->session_gc_queue, s);
 }
 
 SessionState session_get_state(Session *s) {
